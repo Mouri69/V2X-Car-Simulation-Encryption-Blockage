@@ -377,7 +377,21 @@ class V2XSimulation:
                     mitm_status = " [WARN] [MITM INTERCEPTED]"
         
         text_part = message.get("display_text") or f"{sender_id} -> {receiver_id}"
-        print(f"[MSG] {text_part} | {message_type} | {crypto_status}{mitm_status}")
+        log_line = f"[MSG] {text_part} | {message_type} | {crypto_status}{mitm_status}"
+        print(log_line)
+        
+        # Send to appropriate GUI
+        is_attacker_message = (sender_id == "vehicle4") or log_entry.get("forged") or (mitm_status and "MITM" in mitm_status)
+        if self.attacker_gui and is_attacker_message:
+            try:
+                self.attacker_gui.log(log_line)
+            except:
+                pass
+        if self.normal_v2x_gui and not is_attacker_message:
+            try:
+                self.normal_v2x_gui.log(log_line)
+            except:
+                pass
         
         # Store message for GUI display
         current_time = traci.simulation.getTime()
@@ -613,19 +627,37 @@ class V2XSimulation:
     def _handle_menu_action(self, action_key: str):
         """Handle menu actions for purple car"""
         if "vehicle4" not in traci.vehicle.getIDList():
-            print("[WARN]  Purple car (vehicle4) is not active yet!")
+            log_line = "[WARN]  Purple car (vehicle4) is not active yet!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             return
         
         active_vehicles = [vid for vid in traci.vehicle.getIDList() if vid != "vehicle4"]
         if not active_vehicles:
-            print("[WARN]  No other vehicles to interact with!")
+            log_line = "[WARN]  No other vehicles to interact with!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             return
         
         # Get purple car position
         try:
             purple_pos = traci.vehicle.getPosition("vehicle4")
         except:
-            print("[ERROR] Could not get purple car position!")
+            log_line = "[ERROR] Could not get purple car position!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             return
         
         if action_key == '4':
@@ -643,11 +675,67 @@ class V2XSimulation:
                     dist = (dx**2 + dy**2)**0.5
                     
                     name = self.vehicle_names.get(vid, vid)
-                    print(f"  {name}:")
-                    print(f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})")
-                    print(f"    Speed: {speed:.2f} m/s")
-                    print(f"    Edge: {edge}")
-                    print(f"    Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}")
+                    log_line1 = f"  {name}:"
+                    log_line2 = f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})"
+                    log_line3 = f"    Speed: {speed:.2f} m/s"
+                    log_line4 = f"    Edge: {edge}"
+                    log_line5 = f"    Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}"
+                    print(log_line1)
+                    print(log_line2)
+                    print(log_line3)
+                    print(log_line4)
+                    print(log_line5)
+                    if self.attacker_gui:
+                        try:
+                            self.attacker_gui.log(log_line1)
+                            self.attacker_gui.log(log_line2)
+                            self.attacker_gui.log(log_line3)
+                            self.attacker_gui.log(log_line4)
+                            self.attacker_gui.log(log_line5)
+                        except:
+                            pass
+                except:
+                    pass
+            print()
+            return
+        
+        if action_key == '5':
+            # GET DATA ONLY FOR CARS PURPLE HAS BEEN IN RANGE WITH
+            print("\n[DATA] VEHICLE DATA (ENCOUNTERED ONLY):")
+            if not self.purple_encountered_cars:
+                log_line = "  No cars encountered yet!"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
+                return
+            for vid in self.purple_encountered_cars:
+                if vid not in active_vehicles:
+                    continue
+                try:
+                    pos = traci.vehicle.getPosition(vid)
+                    speed = traci.vehicle.getSpeed(vid)
+                    edge = traci.vehicle.getRoadID(vid)
+                    
+                    name = self.vehicle_names.get(vid, vid)
+                    log_line1 = f"  {name}:"
+                    log_line2 = f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})"
+                    log_line3 = f"    Speed: {speed:.2f} m/s"
+                    log_line4 = f"    Edge: {edge}"
+                    print(log_line1)
+                    print(log_line2)
+                    print(log_line3)
+                    print(log_line4)
+                    if self.attacker_gui:
+                        try:
+                            self.attacker_gui.log(log_line1)
+                            self.attacker_gui.log(log_line2)
+                            self.attacker_gui.log(log_line3)
+                            self.attacker_gui.log(log_line4)
+                        except:
+                            pass
                 except:
                     pass
             print()
@@ -655,13 +743,24 @@ class V2XSimulation:
         
         # For actions 1-3, need selected target
         if not self.selected_target:
-            print("[WARN]  No target selected! Choose option 5 first!")
+            log_line = "[WARN]  No target selected! Choose option 6 first!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             return
         
         if self.selected_target not in active_vehicles:
-            print(f"[WARN]  Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} no longer exists!")
+            log_line = f"[WARN]  Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} no longer exists!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             self.selected_target = None
-            self._show_main_menu()
             return
         
         target_vehicle = self.selected_target
@@ -676,10 +775,22 @@ class V2XSimulation:
             distance = (dx**2 + dy**2)**0.5
             
             if distance > COMMUNICATION_RANGE:
-                print(f"[WARN]  {target_name} is out of range! Distance: {distance:.1f}m / {COMMUNICATION_RANGE}m max")
+                log_line = f"[WARN]  {target_name} is out of range! Distance: {distance:.1f}m / {COMMUNICATION_RANGE}m max"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
                 return
         except Exception as e:
-            print(f"[ERROR] Could not calculate distance: {e}")
+            log_line = f"[ERROR] Could not calculate distance: {e}"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
             return
         
         if action_key == '1':
@@ -694,7 +805,13 @@ class V2XSimulation:
                 intercepted=False
             )
             traci.vehicle.setSpeed(target_vehicle, 15)
-            print(f"[ACTION] {target_name} speed set to 15.0 m/s (INSTANTLY faster)!")
+            log_line = f"[ACTION] {target_name} speed set to 15.0 m/s (INSTANTLY faster)!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
         
         elif action_key == '2':
             # Send ACCIDENT AHEAD! - Make target stop completely
@@ -708,7 +825,13 @@ class V2XSimulation:
                 intercepted=False
             )
             traci.vehicle.setSpeed(target_vehicle, 0)
-            print(f"[ACTION] {target_name} stopped completely!")
+            log_line = f"[ACTION] {target_name} stopped completely!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
         
         elif action_key == '3':
             # Send SLOW DOWN - Make target INSTANTLY go very slow (2 m/s)
@@ -722,7 +845,13 @@ class V2XSimulation:
                 intercepted=False
             )
             traci.vehicle.setSpeed(target_vehicle, 2)
-            print(f"[ACTION] {target_name} speed set to 2.0 m/s (INSTANTLY very slow)!")
+            log_line = f"[ACTION] {target_name} speed set to 2.0 m/s (INSTANTLY very slow)!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
 
     def _show_main_menu(self):
         """Show main menu"""
@@ -1488,21 +1617,72 @@ class V2XSimulation:
             pass  # Connection might already be closed
 
 
-class PurpleCarGUI:
+class NormalV2XLogGUI:
+    """GUI that only shows normal, non-attacker V2X communication"""
     def __init__(self, simulation):
         self.simulation = simulation
         self.root = tk.Tk()
-        self.root.title("V2X Purple Car Action Menu")
-        self.root.geometry("500x600")
-        self.selected_target = tk.StringVar()
+        self.root.title("V2X Normal Communication Log")
+        self.root.geometry("600x500")
         
         # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title label
-        title_label = ttk.Label(main_frame, text="PURPLE CAR ACTION MENU", font=("Arial", 16, "bold"))
+        title_label = ttk.Label(main_frame, text="NORMAL VEHICLE-TO-VEHICLE COMMUNICATION", font=("Arial", 14, "bold"))
         title_label.pack(pady=10)
+        
+        # Log area
+        log_frame = ttk.LabelFrame(main_frame, text="Communication Log", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.log_text = tk.Text(log_frame, height=20, state=tk.DISABLED)
+        scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def log(self, message):
+        """Add message to log"""
+        try:
+            self.log_text.config(state=tk.NORMAL)
+            self.log_text.insert(tk.END, message + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+        except:
+            pass
+    
+    def run(self):
+        """Start GUI main loop"""
+        self.root.mainloop()
+
+
+class PurpleCarAttackerGUI:
+    """GUI for the purple car attacker - shows only attack-related logs and has action buttons"""
+    def __init__(self, simulation):
+        self.simulation = simulation
+        self.root = tk.Tk()
+        self.root.title("Purple Car Attacker Panel")
+        self.root.geometry("600x700")
+        self.selected_target = tk.StringVar()
+        self.target_vid = None  # Stores the actual vehicle ID
+        
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title label
+        title_label = ttk.Label(main_frame, text="PURPLE CAR ATTACKER CONTROL", font=("Arial", 16, "bold"))
+        title_label.pack(pady=10)
+        
+        # Encountered cars display
+        encountered_frame = ttk.LabelFrame(main_frame, text="Encountered Vehicles (Data Retrievable)", padding="10")
+        encountered_frame.pack(fill=tk.X, pady=5)
+        
+        self.encountered_label = ttk.Label(encountered_frame, text="No vehicles encountered yet")
+        self.encountered_label.pack()
         
         # Target selection
         target_frame = ttk.LabelFrame(main_frame, text="Select Target Vehicle", padding="10")
@@ -1515,20 +1695,22 @@ class PurpleCarGUI:
         refresh_btn.pack(pady=5)
         
         # Action buttons frame
-        actions_frame = ttk.LabelFrame(main_frame, text="Actions", padding="10")
+        actions_frame = ttk.LabelFrame(main_frame, text="Attack Actions", padding="10")
         actions_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        ttk.Button(actions_frame, text="Send FAKE WARNING (Make Faster - 15 m/s)", 
+        ttk.Button(actions_frame, text="1. Send FAKE WARNING (Make Faster - 15 m/s)", 
                    command=lambda: self.run_action('1')).pack(fill=tk.X, pady=5)
-        ttk.Button(actions_frame, text="Send ACCIDENT AHEAD! (Make Stop - 0 m/s)", 
+        ttk.Button(actions_frame, text="2. Send ACCIDENT AHEAD! (Make Stop - 0 m/s)", 
                    command=lambda: self.run_action('2')).pack(fill=tk.X, pady=5)
-        ttk.Button(actions_frame, text="Send SLOW DOWN (Make Very Slow - 2 m/s)", 
+        ttk.Button(actions_frame, text="3. Send SLOW DOWN (Make Very Slow - 2 m/s)", 
                    command=lambda: self.run_action('3')).pack(fill=tk.X, pady=5)
-        ttk.Button(actions_frame, text="Get VEHICLE DATA", 
+        ttk.Button(actions_frame, text="4. Get ALL VEHICLE DATA", 
                    command=lambda: self.run_action('4')).pack(fill=tk.X, pady=5)
+        ttk.Button(actions_frame, text="5. Get ENCOUNTERED VEHICLE DATA ONLY", 
+                   command=lambda: self.run_action('5')).pack(fill=tk.X, pady=5)
         
         # Log area
-        log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
+        log_frame = ttk.LabelFrame(main_frame, text="Attack Log", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
         self.log_text = tk.Text(log_frame, height=10, state=tk.DISABLED)
@@ -1538,24 +1720,39 @@ class PurpleCarGUI:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Periodically update targets
+        # Periodically update targets and encountered list
         self.refresh_targets()
-        self.update_targets_periodically()
+        self.update_periodically()
     
     def log(self, message):
         """Add message to log"""
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, message + "\n")
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+        try:
+            self.log_text.config(state=tk.NORMAL)
+            self.log_text.insert(tk.END, message + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+        except:
+            pass
     
     def refresh_targets(self):
         """Refresh target list"""
         try:
             if "vehicle4" not in traci.vehicle.getIDList():
                 self.target_combobox['values'] = []
+                self.encountered_label.config(text="No vehicles encountered yet")
                 return
             
+            # Update encountered cars display
+            encountered_list = []
+            for vid in self.simulation.purple_encountered_cars:
+                name = self.simulation.vehicle_names.get(vid, vid)
+                encountered_list.append(name)
+            if encountered_list:
+                self.encountered_label.config(text="Encountered: " + ", ".join(encountered_list))
+            else:
+                self.encountered_label.config(text="No vehicles encountered yet")
+            
+            # Update target list
             active_vehicles = []
             for vid in traci.vehicle.getIDList():
                 if vid == "vehicle4":
@@ -1578,13 +1775,13 @@ class PurpleCarGUI:
             self.target_combobox['values'] = active_vehicles
             if active_vehicles and not self.selected_target.get():
                 self.selected_target.set(active_vehicles[0])
-        except:
+        except Exception as e:
             pass
     
-    def update_targets_periodically(self):
-        """Update targets every 500ms"""
+    def update_periodically(self):
+        """Update targets and encountered list every 500ms"""
         self.refresh_targets()
-        self.root.after(500, self.update_targets_periodically)
+        self.root.after(500, self.update_periodically)
     
     def get_selected_target_id(self):
         """Get vehicle ID from selected target string"""
@@ -1601,27 +1798,15 @@ class PurpleCarGUI:
     def run_action(self, action_key):
         """Run action via simulation's handle_menu_action method"""
         selected_vid = self.get_selected_target_id()
-        if not selected_vid:
-            messagebox.showwarning("Warning", "Please select a target vehicle first!")
-            return
         
-        self.simulation.selected_target = selected_vid
+        # For actions 1-3, we need a selected target
+        if action_key in ['1', '2', '3']:
+            if not selected_vid:
+                messagebox.showwarning("Warning", "Please select a target vehicle first!")
+                return
+            self.simulation.selected_target = selected_vid
         
-        # Redirect print to log
-        original_stdout = sys.stdout
-        try:
-            # Temporarily redirect stdout to capture print output
-            import io
-            sys.stdout = io.StringIO()
-            
-            self.simulation._handle_menu_action(action_key)
-            
-            # Get and log the output
-            output = sys.stdout.getvalue()
-            if output:
-                self.log(output.strip())
-        finally:
-            sys.stdout = original_stdout
+        self.simulation._handle_menu_action(action_key)
     
     def run(self):
         """Start GUI main loop"""
@@ -1636,31 +1821,48 @@ def main():
     
     sim = V2XSimulation()
     
-    # Create GUI instance and start it in a separate thread before starting SUMO
-    gui = None
-    gui_thread = None
+    # Create both GUI instances and start them in separate threads
+    normal_gui = None
+    attacker_gui = None
     
-    def start_gui():
-        nonlocal gui
-        gui = PurpleCarGUI(sim)
-        gui.run()
+    def start_normal_gui():
+        nonlocal normal_gui
+        normal_gui = NormalV2XLogGUI(sim)
+        sim.normal_v2x_gui = normal_gui
+        normal_gui.run()
     
-    gui_thread = threading.Thread(target=start_gui, daemon=True)
-    gui_thread.start()
+    def start_attacker_gui():
+        nonlocal attacker_gui
+        attacker_gui = PurpleCarAttackerGUI(sim)
+        sim.attacker_gui = attacker_gui
+        attacker_gui.run()
     
-    # Wait a little for GUI to initialize
-    time.sleep(1)
+    # Start both GUIs
+    normal_thread = threading.Thread(target=start_normal_gui, daemon=True)
+    normal_thread.start()
+    
+    attacker_thread = threading.Thread(target=start_attacker_gui, daemon=True)
+    attacker_thread.start()
+    
+    # Wait a little for GUIs to initialize
+    time.sleep(1.5)
     
     try:
         sim.run()
     except KeyboardInterrupt:
         print("\n[WARN] Simulation interrupted by user")
-        traci.close()
+        try:
+            traci.close()
+        except:
+            pass
     except Exception as e:
         print(f"\n[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
-        traci.close()
+        try:
+            traci.close()
+        except:
+            pass
 
 
 if __name__ == "__main__":
