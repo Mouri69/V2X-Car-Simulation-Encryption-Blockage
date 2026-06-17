@@ -1,7 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <routes>
-    <vType id="car" accel="2.0" decel="4.5" length="5" maxSpeed="13.9" color="1,0,0"/>
-
-    <route id="r1" edges="e1"/>
-
-    <vehicle id="carA" type="car" route="r1" depart="1" departLane="best" color="1,0,0"/>
+    <!-- Vehicle types -->
+    <vType id="car" accel="2.6" decel="4.5" sigma="0.5" length="5" maxSpeed="13.89" color="1,0,0"/>
+    <vType id="truck" accel="1.5" decel="3.0" sigma="0.3" length="7" maxSpeed="11.11" color="0,1,0"/>
+    
+    <!-- Routes for V2X simulation - vehicles that will interact -->
+    <!-- Route 1: Horizontal across middle (eastbound) -->
+    <route id="route1" edges="1/3to2/3 2/3to3/3"/>
+    
+    <!-- Route 2: Vertical down middle (southbound) -->
+    <route id="route2" edges="2/2to2/3 2/3to2/4"/>
+    
+    <!-- Route 3: Horizontal bottom (eastbound) -->
+    <route id="route3" edges="0/4to1/4 1/4to2/4"/>
+    
+    <!-- Route 4: Vertical right (southbound) - PURPLE CAR (attacker) -->
+    <route id="route4" edges="2/3to3/3 3/3to3/4"/>
+    
+    <!-- New routes to make vehicles stay longer -->
+    <!-- Route 5: Horizontal middle westbound -->
+    <route id="route5" edges="3/3to2/3 2/3to1/3"/>
+    
+    <!-- Route 6: Vertical middle northbound -->
+    <route id="route6" edges="2/4to2/3 2/3to2/2"/>
+    
+    <!-- Route 7: Horizontal bottom westbound -->
+    <route id="route7" edges="2/4to1/4 1/4to0/4"/>
+    
+    <!-- Route 8: Vertical right northbound -->
+    <route id="route8" edges="3/4to3/3 3/3to2/3"/>
+    
+    <!-- Vehicles with different departure times for interaction -->
+    <vehicle id="vehicle1" type="car" route="route1" depart="0" color="1,0,0"/>
+    <vehicle id="vehicle2" type="car" route="route2" depart="2" color="0,1,0"/>
+    <vehicle id="vehicle3" type="car" route="route3" depart="5" color="0,0,1"/>
+    <vehicle id="vehicle4" type="car" route="route4" depart="8" color="1,0,1"/> <!-- PURPLE CAR (attacker) -->
+    <vehicle id="vehicle5" type="truck" route="route1" depart="10" color="0,0.5,0"/>
+    <vehicle id="vehicle6" type="car" route="route5" depart="15" color="1,0.5,0"/>
+    <vehicle id="vehicle7" type="car" route="route6" depart="18" color="0,0.5,1"/>
+    <vehicle id="vehicle8" type="truck" route="route7" depart="22" color="0.5,0,0.5"/>
+    <vehicle id="vehicle9" type="car" route="route8" depart="25" color="0.5,0.5,0"/>
+    <vehicle id="vehicle10" type="car" route="route1" depart="30" color="0.5,0,0"/>
+    <vehicle id="vehicle11" type="truck" route="route2" depart="35" color="0,0.5,0.5"/>
+    <vehicle id="vehicle12" type="car" route="route3" depart="40" color="0.5,0.5,0.5"/>
 </routes>

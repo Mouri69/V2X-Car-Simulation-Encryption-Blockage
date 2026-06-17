@@ -10,7 +10,20 @@ import traci
 import time
 import json
 import math
+import tkinter as tk
+from tkinter import ttk, messagebox
+import threading
 from typing import Dict, List, Tuple
+
+# Set UTF-8 encoding and UNBUFFERED OUTPUT FIRST!
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+else:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
 
 # Import V2X modules
 from v2x_messages import MessageHandler, BSMMessage
@@ -69,6 +82,9 @@ class V2XSimulation:
         self.communication_circles: Dict[str, bool] = {}  # Track drawn comm ranges
         self.vehicle_colors: Dict[str, Tuple[int, int, int]] = {}
         self.communication_radius = COMMUNICATION_RANGE  # meters for on-screen circle (visual only)
+        self.menu_active = False
+        self.menu_mode = "main"  # "main" for main menu, "target" for selecting target
+        self.selected_target = None  # Stores selected target vehicle ID
         
         # State tracking for interaction spam control
         # Set of tuples: (id1, id2, has_mitm)
@@ -79,9 +95,23 @@ class V2XSimulation:
             "vehicle1": "Red Car",
             "vehicle2": "Green Car",
             "vehicle3": "Blue Car",
-            "mitm_attacker": "Purple Car",
-            "vehicle4": "Purple Car"
+            "vehicle4": "Purple Car",  # Attacker
+            "vehicle5": "Dark Green Truck",
+            "vehicle6": "Orange Car",
+            "vehicle7": "Cyan Car",
+            "vehicle8": "Purple Truck",
+            "vehicle9": "Olive Car",
+            "vehicle10": "Maroon Car",
+            "vehicle11": "Teal Truck",
+            "vehicle12": "Grey Car"
         }
+        
+        # Track which cars purple car has been in range with at least once
+        self.purple_encountered_cars = set()
+        
+        # References to GUI instances (set by main())
+        self.normal_v2x_gui = None
+        self.attacker_gui = None
         
     def start_simulation(self):
         """Start SUMO and connect via TraCI"""
@@ -100,7 +130,7 @@ class V2XSimulation:
         sumo_cmd = [sumo_binary, "-c", SIM_CONFIG, "--start", "--step-length", "0.1", "--delay", "100", "--end", "1000"]
         
         traci.start(sumo_cmd)
-        print("✓ SUMO GUI simulation started")
+        print("[OK] SUMO GUI simulation started")
         print("  Note: Vehicles will appear after a few seconds...")
         
     def _build_network(self):
@@ -139,10 +169,10 @@ class V2XSimulation:
                 if edge in all_edges:
                     valid_edges.append(edge)
                 else:
-                    print(f"⚠️  Edge '{edge}' not found in network, skipping")
+                    print(f"[WARN]  Edge '{edge}' not found in network, skipping")
             
             if not valid_edges:
-                print(f"✗ No valid edges for vehicle {vehicle_id}")
+                print(f"[ERROR] No valid edges for vehicle {vehicle_id}")
                 return
             
             # Validate route using SUMO's findRoute before creating it
@@ -157,13 +187,13 @@ class V2XSimulation:
                         # Only use validated route if it has multiple edges (don't reduce to single edge)
                         if len(validated_route) > 1:
                             valid_edges = validated_route
-                            print(f"  ✓ Validated route for {vehicle_id}: {valid_edges}")
+                            print(f"  [OK] Validated route for {vehicle_id}: {valid_edges}")
                         # If validated route is single edge but original had multiple, keep original
                         elif len(validated_route) == 1 and len(valid_edges) > 1:
-                            print(f"  ⚠️  Validation reduced route to single edge, keeping original: {valid_edges}")
+                            print(f"  [WARN]  Validation reduced route to single edge, keeping original: {valid_edges}")
                 except Exception as validate_error:
                     # If validation fails, keep original route
-                    print(f"  ⚠️  Route validation failed for {vehicle_id}, using original route: {validate_error}")
+                    print(f"  [WARN]  Route validation failed for {vehicle_id}, using original route: {validate_error}")
                     # Don't reduce to single edge - keep the original route
             
             # Create route if it doesn't exist
@@ -178,7 +208,7 @@ class V2XSimulation:
                         pass
                 traci.route.add(route_id, valid_edges)
             except Exception as route_error:
-                print(f"✗ Error creating route for {vehicle_id}: {route_error}")
+                print(f"[ERROR] Error creating route for {vehicle_id}: {route_error}")
                 print(f"   Attempted edges: {valid_edges}")
                 # Try with just the first edge as fallback
                 if len(valid_edges) > 0:
@@ -211,7 +241,7 @@ class V2XSimulation:
                     traci.vehicletype.setAccel("car", 2.6)
                     traci.vehicletype.setDecel("car", 4.5)
                 except Exception as type_error:
-                    print(f"⚠️  Could not create vehicle type 'car': {type_error}")
+                    print(f"[WARN]  Could not create vehicle type 'car': {type_error}")
                     # Will try without typeID below
             
             # Get current simulation time
@@ -229,7 +259,7 @@ class V2XSimulation:
                 )
             except Exception as add_error:
                 # Fallback: add without typeID (uses default)
-                print(f"⚠️  Could not add vehicle with type 'car', using default: {add_error}")
+                print(f"[WARN]  Could not add vehicle with type 'car', using default: {add_error}")
                 traci.vehicle.add(
                     vehicle_id,
                     route_id,
@@ -249,10 +279,10 @@ class V2XSimulation:
             # Create Vehicle object
             vehicle = Vehicle(vehicle_id, route_id, depart_time)
             self.vehicles[vehicle_id] = vehicle
-            print(f"✓ Added vehicle: {vehicle_id} on route: {valid_edges}")
+            print(f"[OK] Added vehicle: {vehicle_id} on route: {valid_edges}")
             
         except Exception as e:
-            print(f"✗ Error adding vehicle {vehicle_id}: {e}")
+            print(f"[ERROR] Error adding vehicle {vehicle_id}: {e}")
             import traceback
             traceback.print_exc()
     
@@ -327,27 +357,27 @@ class V2XSimulation:
         
         # Print communication with clear encryption status
         crypto_type = message.get('crypto_type', 'unencrypted')
-        crypto_status = "⚠️ UNENCRYPTED"
+        crypto_status = "[WARN] UNENCRYPTED"
         if use_encryption:
             if crypto_type == 'classical':
-                crypto_status = "🔒 CLASSICAL (AES/RSA)"
+                crypto_status = "[LOCK] CLASSICAL (AES/RSA)"
             elif crypto_type in ('post_quantum', 'postquantum'):
-                crypto_status = "🔐 POST-QUANTUM"
+                crypto_status = "[PQ-LOCK] POST-QUANTUM"
             else:
-                crypto_status = f"🔒 {crypto_type}"
+                crypto_status = f"[LOCK] {crypto_type}"
         
         mitm_status = ""
         if self.mitm_attacker:
             if log_entry.get("forged"):
-                mitm_status = " ⚠️ [MITM ATTACK SUCCESSFUL - MESSAGE FORGED]"
+                mitm_status = " [WARN] [MITM ATTACK SUCCESSFUL - MESSAGE FORGED]"
             elif log_entry.get("mitm_intercepted"):
                 if crypto_type in ('post_quantum', 'postquantum'):
-                    mitm_status = " 🛡️ [MITM BLOCKED - ENCRYPTION SECURE]"
+                    mitm_status = " [SAFE] [MITM BLOCKED - ENCRYPTION SECURE]"
                 else:
-                    mitm_status = " ⚠️ [MITM INTERCEPTED]"
+                    mitm_status = " [WARN] [MITM INTERCEPTED]"
         
-        text_part = message.get("display_text") or f"{sender_id} → {receiver_id}"
-        print(f"📡 {text_part} | {message_type} | {crypto_status}{mitm_status}")
+        text_part = message.get("display_text") or f"{sender_id} -> {receiver_id}"
+        print(f"[MSG] {text_part} | {message_type} | {crypto_status}{mitm_status}")
         
         # Store message for GUI display
         current_time = traci.simulation.getTime()
@@ -387,26 +417,26 @@ class V2XSimulation:
             
             # Add crypto mode indicator
             if self.crypto_mode == "postquantum":
-                label_parts.append("🔐 PQ")
+                label_parts.append("[PQ-LOCK] PQ")
             else:
-                label_parts.append("🔒 CL")
+                label_parts.append("[LOCK] CL")
             
             # Add neighbor count
             if vehicle.neighbors:
-                label_parts.append(f"👥{len(vehicle.neighbors)}")
+                label_parts.append(f"[N]{len(vehicle.neighbors)}")
             
             # Add last message info if available
             if recent:
                 last_msg = recent[-1]
                 msg_short = last_msg["type"][:3]  # BSM -> BSM
-                label_parts.append(f"→{last_msg['to'][-1]}")  # vehicle2 -> 2
+                label_parts.append(f"->{last_msg['to'][-1]}")  # vehicle2 -> 2
                 if last_msg.get("text"):
                     # Shorten text for label
                     snippet = last_msg["text"]
                     if len(snippet) > 22:
-                        snippet = snippet[:22] + "…"
+                        snippet = snippet[:22] + "..."
                     if last_msg.get("forged"):
-                        snippet = f"⚠️ {snippet}"
+                        snippet = f"[WARN] {snippet}"
                     label_parts.append(snippet)
             
             label_text = " | ".join(label_parts)
@@ -580,10 +610,209 @@ class V2XSimulation:
         # or if conditions change (e.g. MITM leaves -> becomes normal)
         self.active_interactions = self.active_interactions.intersection(current_interactions)
 
+    def _handle_menu_action(self, action_key: str):
+        """Handle menu actions for purple car"""
+        if "vehicle4" not in traci.vehicle.getIDList():
+            print("[WARN]  Purple car (vehicle4) is not active yet!")
+            return
+        
+        active_vehicles = [vid for vid in traci.vehicle.getIDList() if vid != "vehicle4"]
+        if not active_vehicles:
+            print("[WARN]  No other vehicles to interact with!")
+            return
+        
+        # Get purple car position
+        try:
+            purple_pos = traci.vehicle.getPosition("vehicle4")
+        except:
+            print("[ERROR] Could not get purple car position!")
+            return
+        
+        if action_key == '4':
+            # GET VEHICLE DATA - doesn't need selected target
+            print("\n[DATA] VEHICLE DATA:")
+            for vid in active_vehicles:
+                try:
+                    pos = traci.vehicle.getPosition(vid)
+                    speed = traci.vehicle.getSpeed(vid)
+                    edge = traci.vehicle.getRoadID(vid)
+                    
+                    # Calculate distance to purple car
+                    dx = purple_pos[0] - pos[0]
+                    dy = purple_pos[1] - pos[1]
+                    dist = (dx**2 + dy**2)**0.5
+                    
+                    name = self.vehicle_names.get(vid, vid)
+                    print(f"  {name}:")
+                    print(f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})")
+                    print(f"    Speed: {speed:.2f} m/s")
+                    print(f"    Edge: {edge}")
+                    print(f"    Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}")
+                except:
+                    pass
+            print()
+            return
+        
+        # For actions 1-3, need selected target
+        if not self.selected_target:
+            print("[WARN]  No target selected! Choose option 5 first!")
+            return
+        
+        if self.selected_target not in active_vehicles:
+            print(f"[WARN]  Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} no longer exists!")
+            self.selected_target = None
+            self._show_main_menu()
+            return
+        
+        target_vehicle = self.selected_target
+        target_name = self.vehicle_names.get(target_vehicle, target_vehicle)
+        
+        # Check if target is within communication range
+        try:
+            target_pos = traci.vehicle.getPosition(target_vehicle)
+            # Calculate distance
+            dx = purple_pos[0] - target_pos[0]
+            dy = purple_pos[1] - target_pos[1]
+            distance = (dx**2 + dy**2)**0.5
+            
+            if distance > COMMUNICATION_RANGE:
+                print(f"[WARN]  {target_name} is out of range! Distance: {distance:.1f}m / {COMMUNICATION_RANGE}m max")
+                return
+        except Exception as e:
+            print(f"[ERROR] Could not calculate distance: {e}")
+            return
+        
+        if action_key == '1':
+            # Send FAKE WARNING - Make target INSTANTLY go 15 m/s
+            self.send_v2v_message(
+                "vehicle4",
+                target_vehicle,
+                "WARNING",
+                {"content": "You're driving too slow! Be faster!", "is_fake": True},
+                use_encryption=True,
+                display_text=f"Purple Car -> {target_name}: 'You're driving too slow! Be faster!'",
+                intercepted=False
+            )
+            traci.vehicle.setSpeed(target_vehicle, 15)
+            print(f"[ACTION] {target_name} speed set to 15.0 m/s (INSTANTLY faster)!")
+        
+        elif action_key == '2':
+            # Send ACCIDENT AHEAD! - Make target stop completely
+            self.send_v2v_message(
+                "vehicle4",
+                target_vehicle,
+                "DENM",
+                {"content": "ACCIDENT AHEAD! Stop immediately!", "event_type": "accident", "is_fake": True},
+                use_encryption=True,
+                display_text=f"Purple Car -> {target_name}: 'ACCIDENT AHEAD! Stop immediately!'",
+                intercepted=False
+            )
+            traci.vehicle.setSpeed(target_vehicle, 0)
+            print(f"[ACTION] {target_name} stopped completely!")
+        
+        elif action_key == '3':
+            # Send SLOW DOWN - Make target INSTANTLY go very slow (2 m/s)
+            self.send_v2v_message(
+                "vehicle4",
+                target_vehicle,
+                "WARNING",
+                {"content": "SLOW DOWN! Hazard detected!", "is_fake": True},
+                use_encryption=True,
+                display_text=f"Purple Car -> {target_name}: 'SLOW DOWN! Hazard detected!'",
+                intercepted=False
+            )
+            traci.vehicle.setSpeed(target_vehicle, 2)
+            print(f"[ACTION] {target_name} speed set to 2.0 m/s (INSTANTLY very slow)!")
+
+    def _show_main_menu(self):
+        """Show main menu"""
+        print("\n" + "="*60)
+        print("PURPLE CAR ACTION MENU")
+        print("="*60)
+        
+        # Show selected target
+        if self.selected_target:
+            target_name = self.vehicle_names.get(self.selected_target, self.selected_target)
+            print(f"[*] Selected Target: {target_name}")
+        else:
+            print("[!] No target selected! Choose option 5 first!")
+        
+        print("\n1 - Send FAKE WARNING")
+        print("2 - Send ACCIDENT AHEAD!")
+        print("3 - Send SLOW DOWN")
+        print("4 - Get VEHICLE DATA")
+        print("5 - Select Target Vehicle")
+        print("M/Q - Close menu")
+        print("="*60 + "\n")
+
+    def _show_target_selection(self):
+        """Show target selection menu"""
+        active_vehicles = [vid for vid in traci.vehicle.getIDList() if vid != "vehicle4"]
+        print("\n" + "="*60)
+        print("SELECT TARGET VEHICLE")
+        print("="*60)
+        if not active_vehicles:
+            print("[WARN] No other vehicles available!")
+        else:
+            for i, vid in enumerate(active_vehicles):
+                name = self.vehicle_names.get(vid, vid)
+                # Get distance info
+                try:
+                    purple_pos = traci.vehicle.getPosition("vehicle4")
+                    target_pos = traci.vehicle.getPosition(vid)
+                    dx = purple_pos[0] - target_pos[0]
+                    dy = purple_pos[1] - target_pos[1]
+                    dist = (dx**2 + dy**2)**0.5
+                    in_range = dist <= COMMUNICATION_RANGE
+                    range_info = f" [{'IN RANGE' if in_range else 'OUT OF RANGE'} - {dist:.1f}m]"
+                except:
+                    range_info = ""
+                
+                print(f"{i+1} - {name}{range_info}")
+        print("\nM/Q - Back to main menu")
+        print("="*60 + "\n")
+
     def run_simulation_step(self):
         """Run one simulation step"""
         traci.simulationStep()
         current_time = traci.simulation.getTime()
+        
+        # Prevent vehicles from disappearing by teleporting them back
+        active_vehicle_ids = traci.vehicle.getIDList()
+        for vid in active_vehicle_ids:
+            try:
+                # Check if vehicle is at the end of its route
+                route_index = traci.vehicle.getRouteIndex(vid)
+                route = traci.vehicle.getRoute(vid)
+                if route_index >= len(route) - 1:
+                    # Teleport back to start of route
+                    start_edge = route[0]
+                    traci.vehicle.moveTo(vid, start_edge, 0)
+                    # Set speed to normal
+                    traci.vehicle.setSpeed(vid, -1)  # -1 means let SUMO control speed
+            except:
+                pass
+        
+        # Track cars purple car has been in range with
+        if "vehicle4" in active_vehicle_ids:
+            try:
+                purple_pos = traci.vehicle.getPosition("vehicle4")
+                for vid in active_vehicle_ids:
+                    if vid == "vehicle4":
+                        continue
+                    try:
+                        target_pos = traci.vehicle.getPosition(vid)
+                        dx = purple_pos[0] - target_pos[0]
+                        dy = purple_pos[1] - target_pos[1]
+                        dist = (dx**2 + dy**2)**0.5
+                        if dist <= COMMUNICATION_RANGE:
+                            self.purple_encountered_cars.add(vid)
+                    except:
+                        continue
+            except:
+                pass
+        
+        # Terminal keyboard menu disabled - using GUI instead
         
         # Get list of vehicles that actually exist in SUMO
         active_vehicle_ids = traci.vehicle.getIDList()
@@ -597,7 +826,7 @@ class V2XSimulation:
                     
                     # Check if vehicle stopped
                     # if old_speed > 0.1 and self.vehicles[vehicle_id].speed < 0.1:
-                    #    print(f"🛑 {vehicle_id} STOPPED at time {current_time:.1f}s")
+                    #    print(f"[STOP] {vehicle_id} STOPPED at time {current_time:.1f}s")
                     
                     # Update neighbors
                     self.vehicles[vehicle_id].neighbors = self.find_neighbors(vehicle_id)
@@ -647,7 +876,7 @@ class V2XSimulation:
                                                 traci.route.add(route_id, extended_route)
                                                 # Change vehicle route
                                                 traci.vehicle.setRoute(vehicle_id, extended_route)
-                                                print(f"  🔄 {vehicle_id} route extended ({len(extended_route)} edges)")
+                                                print(f"  [LOOP] {vehicle_id} route extended ({len(extended_route)} edges)")
                                                 continue  # Success, move to next vehicle
                                     except:
                                         pass
@@ -703,27 +932,27 @@ class V2XSimulation:
         # Get network edges for routing
         edges = self.get_network_edges()
         if not edges:
-            print("✗ No edges found in network!")
+            print("[ERROR] No edges found in network!")
             return
         
         # Filter out internal edges (those starting with ":")
         road_edges = [e for e in edges if not e.startswith(":")]
         
         if not road_edges:
-            print("✗ No road edges found!")
+            print("[ERROR] No road edges found!")
             print(f"All edges: {edges[:10]}...")  # Show first 10 edges for debugging
             return
         
-        print(f"✓ Found {len(road_edges)} road edges")
+        print(f"[OK] Found {len(road_edges)} road edges")
         print(f"Sample edges: {road_edges[:5]}")  # Debug: show first 5 edges
         
         # Try to find valid routes using SUMO's route finding
         # Get junctions to find start/end points
         junctions = traci.junction.getIDList()
-        print(f"✓ Found {len(junctions)} junctions")
+        print(f"[OK] Found {len(junctions)} junctions")
         
         # Use a simpler approach: find connected edge sequences directly
-        print("\n🔍 Attempting to add vehicles...")
+        print("\n[SEARCH] Attempting to add vehicles...")
         current_time = traci.simulation.getTime()
         
         def find_connected_route(start_edge: str, max_length: int = 5) -> List[str]:
@@ -894,10 +1123,10 @@ class V2XSimulation:
                         print(f"  Route3: {route3_edges} (using edge {idx})")
                         self.add_vehicle("vehicle3", route3_edges, current_time + 5, (0, 0, 255))
                         vehicle3_added = True
-                        print(f"  ✓ Vehicle3 added successfully")
+                        print(f"  [OK] Vehicle3 added successfully")
                         break  # Success, exit loop
                     except Exception as e:
-                        print(f"    ✗ Failed with edge {idx}: {e}")
+                        print(f"    [ERROR] Failed with edge {idx}: {e}")
                         continue
                 
                 # If all attempts failed, try with simple single edge
@@ -907,18 +1136,18 @@ class V2XSimulation:
                         try:
                             self.add_vehicle("vehicle3", [road_edges[idx]], current_time + 5, (0, 0, 255))
                             vehicle3_added = True
-                            print(f"  ✓ Vehicle3 added with single edge {idx}: {road_edges[idx]}")
+                            print(f"  [OK] Vehicle3 added with single edge {idx}: {road_edges[idx]}")
                             break
                         except Exception as e:
-                            print(f"    ✗ Failed with single edge {idx}: {e}")
+                            print(f"    [ERROR] Failed with single edge {idx}: {e}")
                             continue
             except Exception as e:
-                print(f"  ✗ Failed to add vehicle3: {e}")
+                print(f"  [ERROR] Failed to add vehicle3: {e}")
                 import traceback
                 traceback.print_exc()
             
             if not vehicle3_added:
-                print(f"  ⚠️  WARNING: Could not add vehicle3 after all attempts!")
+                print(f"  [WARN]  WARNING: Could not add vehicle3 after all attempts!")
             
             # Vehicle 4: Purple vehicle
             print(f"  Attempting to add vehicle4 (purple)...")
@@ -937,11 +1166,11 @@ class V2XSimulation:
                         # Purple color: (128, 0, 128)
                         self.add_vehicle("vehicle4", route4_edges, current_time + 7, (128, 0, 128))
                         vehicle4_added = True
-                        print(f"  ✓ Vehicle4 added successfully")
+                        print(f"  [OK] Vehicle4 added successfully")
                         self.mitm_attacker = MITMAttacker("vehicle4", use_quantum_attack=True)
                         break  # Success, exit loop
                     except Exception as e:
-                        print(f"    ✗ Failed with edge {idx}: {e}")
+                        print(f"    [ERROR] Failed with edge {idx}: {e}")
                         continue
                 
                 # If all attempts failed, try with simple single edge
@@ -951,17 +1180,46 @@ class V2XSimulation:
                         try:
                             self.add_vehicle("vehicle4", [road_edges[idx]], current_time + 7, (128, 0, 128))
                             vehicle4_added = True
-                            print(f"  ✓ Vehicle4 added with single edge {idx}: {road_edges[idx]}")
+                            print(f"  [OK] Vehicle4 added with single edge {idx}: {road_edges[idx]}")
                             self.mitm_attacker = MITMAttacker("vehicle4", use_quantum_attack=True)
                             break
                         except Exception as e:
-                            print(f"    ✗ Failed with single edge {idx}: {e}")
+                            print(f"    [ERROR] Failed with single edge {idx}: {e}")
                             continue
             except Exception as e:
-                print(f"  ✗ Failed to add vehicle4: {e}")
+                print(f"  [ERROR] Failed to add vehicle4: {e}")
             
             if not vehicle4_added:
-                print(f"  ⚠️  WARNING: Could not add vehicle4 after all attempts!")
+                print(f"  [WARN]  WARNING: Could not add vehicle4 after all attempts!")
+            
+            # Add additional vehicles (5-12)
+            additional_vehicles = [
+                ("vehicle5", (0, 128, 0), 10),  # Dark Green Truck
+                ("vehicle6", (255, 128, 0), 15),  # Orange Car
+                ("vehicle7", (0, 128, 255), 18),  # Cyan Car
+                ("vehicle8", (128, 0, 128), 22),  # Purple Truck
+                ("vehicle9", (128, 128, 0), 25),  # Olive Car
+                ("vehicle10", (128, 0, 0), 30),  # Maroon Car
+                ("vehicle11", (0, 128, 128), 35),  # Teal Truck
+                ("vehicle12", (128, 128, 128), 40)  # Grey Car
+            ]
+            
+            for veh_id, color, offset in additional_vehicles:
+                try:
+                    edge_idx = (int(veh_id.replace("vehicle", "")) - 1) % len(road_edges)
+                    test_edge = road_edges[edge_idx]
+                    route_edges = find_connected_route(test_edge, max_length=3)
+                    if len(route_edges) < 1:
+                        route_edges = [test_edge]
+                    self.add_vehicle(veh_id, route_edges, current_time + offset, color)
+                    print(f"  [OK] {self.vehicle_names.get(veh_id, veh_id)} added successfully")
+                except Exception as e:
+                    try:
+                        edge_idx = (int(veh_id.replace("vehicle", "")) - 1) % len(road_edges)
+                        self.add_vehicle(veh_id, [road_edges[edge_idx]], current_time + offset, color)
+                        print(f"  [OK] {self.vehicle_names.get(veh_id, veh_id)} added with single edge")
+                    except Exception as e2:
+                        print(f"  [WARN] Failed to add {self.vehicle_names.get(veh_id, veh_id)}: {e2}")
         else:
             # Fallback: use single edges
             print("  Not enough junctions, using single edges...")
@@ -972,6 +1230,26 @@ class V2XSimulation:
                 self.add_vehicle("vehicle3", [road_edges[2]], current_time + 5, (0, 0, 255))
             if len(road_edges) > 3:
                 self.add_vehicle("vehicle4", [road_edges[3]], current_time + 7, (128, 0, 128))
+            
+            # Add additional vehicles in fallback mode too
+            additional_vehicles = [
+                ("vehicle5", (0, 128, 0), 10),
+                ("vehicle6", (255, 128, 0), 15),
+                ("vehicle7", (0, 128, 255), 18),
+                ("vehicle8", (128, 0, 128), 22),
+                ("vehicle9", (128, 128, 0), 25),
+                ("vehicle10", (128, 0, 0), 30),
+                ("vehicle11", (0, 128, 128), 35),
+                ("vehicle12", (128, 128, 128), 40)
+            ]
+            
+            for veh_id, color, offset in additional_vehicles:
+                try:
+                    edge_idx = (int(veh_id.replace("vehicle", "")) - 1) % len(road_edges)
+                    self.add_vehicle(veh_id, [road_edges[edge_idx]], current_time + offset, color)
+                    print(f"  [OK] {self.vehicle_names.get(veh_id, veh_id)} added successfully")
+                except Exception as e:
+                    print(f"  [WARN] Failed to add {self.vehicle_names.get(veh_id, veh_id)}: {e}")
         
         # Wait a moment for vehicles to be processed by SUMO
         time.sleep(0.5)
@@ -1108,26 +1386,28 @@ class V2XSimulation:
     def _continue_simulation(self, road_edges: List[str]):
         """Continue simulation after vehicles are added"""
         # Check if any vehicles were added
-        print(f"\n📊 Vehicles registered: {len(self.vehicles)}")
+        print(f"\n[DATA] Vehicles registered: {len(self.vehicles)}")
         if len(self.vehicles) == 0:
-            print("⚠️  No vehicles were added! Check edge connectivity.")
+            print("[WARN]  No vehicles were added! Check edge connectivity.")
             print(f"Available edges: {road_edges[:10]}")
             return
         
         # Run simulation
-        print("\n🚗 Starting simulation...")
+        print("\n[CAR] Starting simulation...")
         print(f"   Running for {SIMULATION_END} seconds ({SIMULATION_END//60} minutes)...")
-        print(f"\n📋 CRYPTO SCHEDULE:")
-        print(f"   🔒 0-60s:     CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"   🔐 60-120s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
-        print(f"   🔒 120-180s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"   🔐 180-240s:  POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
-        print(f"   🔒 240-300s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"\n🚗 VEHICLES:")
-        print(f"   🔴 Vehicle1: RED")
-        print(f"   🟢 Vehicle2: GREEN")
-        print(f"   🔵 Vehicle3: BLUE")
-        print(f"   🟣 Vehicle4: PURPLE")
+        print(f"\n[MENU] CRYPTO SCHEDULE:")
+        print(f"   [LOCK] 0-60s:     CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
+        print(f"   [PQ-LOCK] 60-120s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
+        print(f"   [LOCK] 120-180s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
+        print(f"   [PQ-LOCK] 180-240s:  POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
+        print(f"   [LOCK] 240-300s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
+        print(f"\n[CAR] VEHICLES:")
+        print(f"   Vehicle1: RED")
+        print(f"   Vehicle2: GREEN")
+        print(f"   Vehicle3: BLUE")
+        print(f"   Vehicle4: PURPLE")
+        print(f"\n[MENU] CONTROLS:")
+        print(f"   M - Open/Close Action Menu")
         print()
         step = 0
         
@@ -1138,12 +1418,12 @@ class V2XSimulation:
                     try:
                         current_time = traci.simulation.getTime()
                     except:
-                        print("\n⚠️  TraCI connection lost")
+                        print("\n[WARN]  TraCI connection lost")
                         break
                     
                     # Check if we've reached the time limit
                     if current_time >= SIMULATION_END:
-                        print(f"\n⏱️  Reached time limit: {SIMULATION_END}s")
+                        print(f"\n[TIME]  Reached time limit: {SIMULATION_END}s")
                         break
                     
                     # Run simulation step
@@ -1157,14 +1437,14 @@ class V2XSimulation:
                     
                     # Every 10 steps, show status
                     # if step % 10 == 0:
-                    #     print(f"\n⏱️  Time: {current_time:.1f}s / {SIMULATION_END}s | Vehicles: {len(active_vehicles)} | Messages: {len(self.communication_log)} | Crypto: {self.crypto_mode.upper()}")
+                    #     print(f"\n[TIME]  Time: {current_time:.1f}s / {SIMULATION_END}s | Vehicles: {len(active_vehicles)} | Messages: {len(self.communication_log)} | Crypto: {self.crypto_mode.upper()}")
                     #     if active_vehicles:
-                    #         print(f"  🚗 Active: {', '.join(active_vehicles)}")
+                    #         print(f"  [CAR] Active: {', '.join(active_vehicles)}")
                         
                         # Show V2V communication status
                         # for vehicle_id, vehicle in list(self.vehicles.items()):
                         #    if vehicle.neighbors:
-                        #        print(f"  📡 {vehicle_id} ↔ {', '.join(vehicle.neighbors)} (range: {COMMUNICATION_RANGE}m)")
+                        #        print(f"  [MSG] {vehicle_id} <-> {', '.join(vehicle.neighbors)} (range: {COMMUNICATION_RANGE}m)")
                         #        print(f"     Position: ({vehicle.position[0]:.1f}, {vehicle.position[1]:.1f}) | Speed: {vehicle.speed:.2f} m/s")
                     
                     step += 1
@@ -1173,9 +1453,9 @@ class V2XSimulation:
                     if current_time >= 60.0 and self.crypto_mode == "classical":
                         self.crypto_mode = "postquantum"
                         print(f"\n{'='*60}")
-                        print(f"🔄 CRYPTO MODE SWITCH at {current_time:.1f}s")
-                        print(f"   Changed from: 🔒 CLASSICAL (AES/RSA)")
-                        print(f"   Changed to:   🔐 POST-QUANTUM (Quantum-Resistant)")
+                        print(f"[LOOP] CRYPTO MODE SWITCH at {current_time:.1f}s")
+                        print(f"   Changed from: [LOCK] CLASSICAL (AES/RSA)")
+                        print(f"   Changed to:   [PQ-LOCK] POST-QUANTUM (Quantum-Resistant)")
                         
                         # Update all vehicle labels to show new crypto mode
                         for vid in list(self.vehicles.keys()):
@@ -1187,25 +1467,165 @@ class V2XSimulation:
                     time.sleep(0.05)  # 50ms delay per step = slower, more visible simulation
                     
                 except traci.exceptions.FatalTraCIError as e:
-                    print(f"\n⚠️  TraCI fatal error: {e}")
+                    print(f"\n[WARN]  TraCI fatal error: {e}")
                     break
                 except traci.exceptions.TraCIException as e:
-                    print(f"\n⚠️  TraCI error: {e}")
+                    print(f"\n[WARN]  TraCI error: {e}")
                     # Continue simulation, might be recoverable
                     step += 1
                 except Exception as e:
-                    print(f"\n⚠️  Error in simulation step {step}: {e}")
+                    print(f"\n[WARN]  Error in simulation step {step}: {e}")
                     import traceback
                     traceback.print_exc()
                     break
         except KeyboardInterrupt:
-            print("\n⚠️  Simulation interrupted by user")
+            print("\n[WARN]  Simulation interrupted by user")
         
-        print("\n✓ Simulation completed")
+        print("\n[OK] Simulation completed")
         try:
             traci.close()
         except:
             pass  # Connection might already be closed
+
+
+class PurpleCarGUI:
+    def __init__(self, simulation):
+        self.simulation = simulation
+        self.root = tk.Tk()
+        self.root.title("V2X Purple Car Action Menu")
+        self.root.geometry("500x600")
+        self.selected_target = tk.StringVar()
+        
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title label
+        title_label = ttk.Label(main_frame, text="PURPLE CAR ACTION MENU", font=("Arial", 16, "bold"))
+        title_label.pack(pady=10)
+        
+        # Target selection
+        target_frame = ttk.LabelFrame(main_frame, text="Select Target Vehicle", padding="10")
+        target_frame.pack(fill=tk.X, pady=5)
+        
+        self.target_combobox = ttk.Combobox(target_frame, textvariable=self.selected_target, state="readonly")
+        self.target_combobox.pack(fill=tk.X, pady=5)
+        
+        refresh_btn = ttk.Button(target_frame, text="Refresh Targets", command=self.refresh_targets)
+        refresh_btn.pack(pady=5)
+        
+        # Action buttons frame
+        actions_frame = ttk.LabelFrame(main_frame, text="Actions", padding="10")
+        actions_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        ttk.Button(actions_frame, text="Send FAKE WARNING (Make Faster - 15 m/s)", 
+                   command=lambda: self.run_action('1')).pack(fill=tk.X, pady=5)
+        ttk.Button(actions_frame, text="Send ACCIDENT AHEAD! (Make Stop - 0 m/s)", 
+                   command=lambda: self.run_action('2')).pack(fill=tk.X, pady=5)
+        ttk.Button(actions_frame, text="Send SLOW DOWN (Make Very Slow - 2 m/s)", 
+                   command=lambda: self.run_action('3')).pack(fill=tk.X, pady=5)
+        ttk.Button(actions_frame, text="Get VEHICLE DATA", 
+                   command=lambda: self.run_action('4')).pack(fill=tk.X, pady=5)
+        
+        # Log area
+        log_frame = ttk.LabelFrame(main_frame, text="Log", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        self.log_text = tk.Text(log_frame, height=10, state=tk.DISABLED)
+        scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Periodically update targets
+        self.refresh_targets()
+        self.update_targets_periodically()
+    
+    def log(self, message):
+        """Add message to log"""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, message + "\n")
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+    
+    def refresh_targets(self):
+        """Refresh target list"""
+        try:
+            if "vehicle4" not in traci.vehicle.getIDList():
+                self.target_combobox['values'] = []
+                return
+            
+            active_vehicles = []
+            for vid in traci.vehicle.getIDList():
+                if vid == "vehicle4":
+                    continue
+                name = self.simulation.vehicle_names.get(vid, vid)
+                
+                # Check range
+                try:
+                    purple_pos = traci.vehicle.getPosition("vehicle4")
+                    target_pos = traci.vehicle.getPosition(vid)
+                    dx = purple_pos[0] - target_pos[0]
+                    dy = purple_pos[1] - target_pos[1]
+                    dist = (dx**2 + dy**2)**0.5
+                    in_range = dist <= COMMUNICATION_RANGE
+                    range_str = " [IN RANGE]" if in_range else " [OUT OF RANGE]"
+                    active_vehicles.append(f"{name} ({vid}){range_str}")
+                except:
+                    active_vehicles.append(f"{name} ({vid})")
+            
+            self.target_combobox['values'] = active_vehicles
+            if active_vehicles and not self.selected_target.get():
+                self.selected_target.set(active_vehicles[0])
+        except:
+            pass
+    
+    def update_targets_periodically(self):
+        """Update targets every 500ms"""
+        self.refresh_targets()
+        self.root.after(500, self.update_targets_periodically)
+    
+    def get_selected_target_id(self):
+        """Get vehicle ID from selected target string"""
+        selected = self.selected_target.get()
+        if not selected:
+            return None
+        # Extract vehicle ID from string like "Red Car (vehicle1) [IN RANGE]"
+        if "(" in selected and ")" in selected:
+            start = selected.find("(") + 1
+            end = selected.find(")")
+            return selected[start:end]
+        return None
+    
+    def run_action(self, action_key):
+        """Run action via simulation's handle_menu_action method"""
+        selected_vid = self.get_selected_target_id()
+        if not selected_vid:
+            messagebox.showwarning("Warning", "Please select a target vehicle first!")
+            return
+        
+        self.simulation.selected_target = selected_vid
+        
+        # Redirect print to log
+        original_stdout = sys.stdout
+        try:
+            # Temporarily redirect stdout to capture print output
+            import io
+            sys.stdout = io.StringIO()
+            
+            self.simulation._handle_menu_action(action_key)
+            
+            # Get and log the output
+            output = sys.stdout.getvalue()
+            if output:
+                self.log(output.strip())
+        finally:
+            sys.stdout = original_stdout
+    
+    def run(self):
+        """Start GUI main loop"""
+        self.root.mainloop()
 
 
 def main():
@@ -1216,13 +1636,28 @@ def main():
     
     sim = V2XSimulation()
     
+    # Create GUI instance and start it in a separate thread before starting SUMO
+    gui = None
+    gui_thread = None
+    
+    def start_gui():
+        nonlocal gui
+        gui = PurpleCarGUI(sim)
+        gui.run()
+    
+    gui_thread = threading.Thread(target=start_gui, daemon=True)
+    gui_thread.start()
+    
+    # Wait a little for GUI to initialize
+    time.sleep(1)
+    
     try:
         sim.run()
     except KeyboardInterrupt:
-        print("\n⚠ Simulation interrupted by user")
+        print("\n[WARN] Simulation interrupted by user")
         traci.close()
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\n[ERROR] Error: {e}")
         import traceback
         traceback.print_exc()
         traci.close()

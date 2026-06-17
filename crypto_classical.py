@@ -119,10 +119,10 @@ class QuantumVulnerability:
         """
         # Simplified: Simulates successful quantum attack
         # In real quantum attack, Shor's algorithm factors large numbers
-        print("⚠️  QUANTUM ATTACK: Breaking classical encryption...")
+        print("⚠️  WARNING OF QUANTUM ATTACK: By Breaking classical encryption...")
         print("   Using Shor's algorithm to factor key...")
-        print("   ✓ Key factored successfully!")
-        print("   ✓ Encryption broken!")
+        print("   ✓ Causes key to be factored successfully!")
+        print("   ✓ Causes Encryption to be broken!")
         
         # For demo: Return "decrypted" message (simulated)
         # In real attack, this would actually decrypt the message
