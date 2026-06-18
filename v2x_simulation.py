@@ -37,8 +37,8 @@ sys.path.append(os.path.join(SUMO_HOME, "tools"))
 
 # Simulation parameters
 SIM_CONFIG = "sumo_test/sim.sumocfg"
-COMMUNICATION_RANGE = 70  # meters
-SIMULATION_END = 1000  # seconds (increased to allow long running)
+COMMUNICATION_RANGE = 50  # meters
+SIMULATION_END = 300  # seconds
 
 
 class Vehicle:
@@ -630,6 +630,13 @@ class V2XSimulation:
 
     def _handle_menu_action(self, action_key: str):
         """Handle menu actions for purple car"""
+        print(f"\n[DEBUG] ======================")
+        print(f"[DEBUG] _handle_menu_action CALLED")
+        print(f"[DEBUG] action_key='{action_key}'")
+        print(f"[DEBUG] self.selected_target='{self.selected_target}'")
+        all_active_vids = traci.vehicle.getIDList()
+        print(f"[DEBUG] All active vehicles in SUMO: {all_active_vids}")
+        print(f"[DEBUG] ======================\n")
         if "vehicle4" not in traci.vehicle.getIDList():
             log_line = "[WARN]  Purple car (vehicle4) is not active yet!"
             print(log_line)
@@ -640,7 +647,8 @@ class V2XSimulation:
                     pass
             return
         
-        active_vehicles = [vid for vid in traci.vehicle.getIDList() if vid != "vehicle4"]
+        all_active_vehicles = traci.vehicle.getIDList()
+        active_vehicles = [vid for vid in all_active_vehicles if vid != "vehicle4"]  # For targets only
         if not active_vehicles:
             log_line = "[WARN]  No other vehicles to interact with!"
             print(log_line)
@@ -770,25 +778,32 @@ class V2XSimulation:
         target_vehicle = self.selected_target
         target_name = self.vehicle_names.get(target_vehicle, target_vehicle)
         
-        # Check if target is within communication range
+        # Get purple car's current position first
+        purple_pos = None
+        if "vehicle4" not in all_active_vehicles:
+            log_line = "[ERROR] Purple Car (vehicle4) is not active!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
+            return
         try:
-            target_pos = traci.vehicle.getPosition(target_vehicle)
-            # Calculate distance
-            dx = purple_pos[0] - target_pos[0]
-            dy = purple_pos[1] - target_pos[1]
-            distance = (dx**2 + dy**2)**0.5
-            
-            if distance > COMMUNICATION_RANGE:
-                log_line = f"[WARN]  {target_name} is out of range! Distance: {distance:.1f}m / {COMMUNICATION_RANGE}m max"
-                print(log_line)
-                if self.attacker_gui:
-                    try:
-                        self.attacker_gui.log(log_line)
-                    except:
-                        pass
-                return
+            purple_pos = traci.vehicle.getPosition("vehicle4")
         except Exception as e:
-            log_line = f"[ERROR] Could not calculate distance: {e}"
+            log_line = f"[ERROR] Could not get Purple Car position: {e}"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
+            return
+        
+        # Check if target has been encountered before (not range, just encounter)
+        if target_vehicle not in self.purple_encountered_cars:
+            log_line = f"[WARN]  {target_name} has not been encountered yet! Purple car must be in range of it at least once before attacking!"
             print(log_line)
             if self.attacker_gui:
                 try:
@@ -1131,7 +1146,7 @@ class V2XSimulation:
         print("\n[SEARCH] Attempting to add vehicles...")
         current_time = traci.simulation.getTime()
         
-        def find_connected_route(start_edge: str, max_length: int = 5) -> List[str]:
+        def find_connected_route(start_edge: str, max_length: int = 10) -> List[str]:
             """Find a connected route using SUMO's findRoute - validates entire route"""
             # Start with just the first edge
             route = [start_edge]
@@ -1335,7 +1350,7 @@ class V2XSimulation:
                         test_edge = road_edges[idx]
                         print(f"    Trying edge {idx}: {test_edge}")
                         # Try to create a simple route with this edge
-                        route4_edges = find_connected_route(test_edge, max_length=3)
+                        route4_edges = find_connected_route(test_edge, max_length=20)
                         if len(route4_edges) < 1:
                             route4_edges = [test_edge]
                         print(f"  Route4: {route4_edges} (using edge {idx})")
@@ -1573,10 +1588,7 @@ class V2XSimulation:
         print(f"   Running for {SIMULATION_END} seconds ({SIMULATION_END//60} minutes)...")
         print(f"\n[MENU] CRYPTO SCHEDULE:")
         print(f"   [LOCK] 0-60s:     CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"   [PQ-LOCK] 60-120s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
-        print(f"   [LOCK] 120-180s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"   [PQ-LOCK] 180-240s:  POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
-        print(f"   [LOCK] 240-300s:  CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
+        print(f"   [PQ-LOCK] 60-300s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
         print(f"\n[CAR] VEHICLES:")
         print(f"   Vehicle1: RED")
         print(f"   Vehicle2: GREEN")
@@ -1625,13 +1637,14 @@ class V2XSimulation:
                     
                     step += 1
                     
-                    # Switch crypto mode at 60 seconds
+                    # Switch crypto mode to post-quantum at 60 seconds and stay there
                     if current_time >= 60.0 and self.crypto_mode == "classical":
                         self.crypto_mode = "postquantum"
                         print(f"\n{'='*60}")
-                        print(f"[LOOP] CRYPTO MODE SWITCH at {current_time:.1f}s")
+                        print(f"[INFO] CRYPTO MODE SWITCH at {current_time:.1f}s")
                         print(f"   Changed from: [LOCK] CLASSICAL (AES/RSA)")
                         print(f"   Changed to:   [PQ-LOCK] POST-QUANTUM (Quantum-Resistant)")
+                        print(f"   Will stay post-quantum for rest of simulation!")
                         
                         # Update all vehicle labels to show new crypto mode
                         for vid in list(self.vehicles.keys()):
@@ -1640,7 +1653,7 @@ class V2XSimulation:
                     
                     # Add small delay to make simulation visible (only in GUI mode)
                     # This slows down the simulation so you can see it
-                    time.sleep(0.05)  # 50ms delay per step = slower, more visible simulation
+                    time.sleep(0.01)  # 10ms delay per step = much smoother simulation
                     
                 except traci.exceptions.FatalTraCIError as e:
                     print(f"\n[WARN]  TraCI fatal error: {e}")
@@ -1714,7 +1727,7 @@ class PurpleCarAttackerGUI:
         self.root.title("Purple Car Attacker Panel")
         self.root.geometry("600x700")
         self.selected_target = tk.StringVar()
-        self.target_vid = None  # Stores the actual vehicle ID
+        self.last_user_selected_vid = None  # Tracks the last vehicle the user manually selected
         
         # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
@@ -1737,6 +1750,7 @@ class PurpleCarAttackerGUI:
         
         self.target_combobox = ttk.Combobox(target_frame, textvariable=self.selected_target, state="readonly")
         self.target_combobox.pack(fill=tk.X, pady=5)
+        self.target_combobox.bind("<<ComboboxSelected>>", self.on_target_selected)
         
         refresh_btn = ttk.Button(target_frame, text="Refresh Targets", command=self.refresh_targets)
         refresh_btn.pack(pady=5)
@@ -1781,19 +1795,35 @@ class PurpleCarAttackerGUI:
         except:
             pass
     
+    def on_target_selected(self, event):
+        """Called when user manually selects a target from combobox"""
+        # Use event.widget.get() to get the NEW selection immediately!
+        selected_str = event.widget.get()
+        
+        # Extract the vid from this string
+        selected_vid = None
+        if "(" in selected_str and ")" in selected_str:
+            start = selected_str.find("(") + 1
+            end = selected_str.find(")")
+            selected_vid = selected_str[start:end]
+        
+        self.last_user_selected_vid = selected_vid
+    
     def refresh_targets(self):
-        """Refresh target list"""
+        """Refresh target list WITHOUT OVERWRITING USER SELECTION UNLESS ABSOLUTELY NECESSARY"""
         try:
-            if "vehicle4" not in traci.vehicle.getIDList():
-                self.target_combobox['values'] = []
-                self.encountered_label.config(text="No vehicles encountered yet")
-                return
+            print(f"[DEBUG] refresh_targets() CALLED")
+            print(f"[DEBUG] refresh_targets(): last_user_selected_vid = '{self.last_user_selected_vid}'")
             
             # Update encountered cars display
             encountered_list = []
-            for vid in self.simulation.purple_encountered_cars:
-                name = self.simulation.vehicle_names.get(vid, vid)
-                encountered_list.append(name)
+            try:
+                if "vehicle4" in traci.vehicle.getIDList():
+                    for vid in self.simulation.purple_encountered_cars:
+                        name = self.simulation.vehicle_names.get(vid, vid)
+                        encountered_list.append(name)
+            except:
+                pass
             if encountered_list:
                 self.encountered_label.config(text="Encountered: " + ", ".join(encountered_list))
             else:
@@ -1801,34 +1831,88 @@ class PurpleCarAttackerGUI:
             
             # Update target list
             active_vehicles = []
-            for vid in traci.vehicle.getIDList():
-                if vid == "vehicle4":
-                    continue
-                name = self.simulation.vehicle_names.get(vid, vid)
-                
-                # Check range
-                try:
-                    purple_pos = traci.vehicle.getPosition("vehicle4")
-                    target_pos = traci.vehicle.getPosition(vid)
-                    dx = purple_pos[0] - target_pos[0]
-                    dy = purple_pos[1] - target_pos[1]
-                    dist = (dx**2 + dy**2)**0.5
-                    in_range = dist <= COMMUNICATION_RANGE
-                    range_str = " [IN RANGE]" if in_range else " [OUT OF RANGE]"
-                    active_vehicles.append(f"{name} ({vid}){range_str}")
-                except:
-                    active_vehicles.append(f"{name} ({vid})")
+            active_vids = []
+            try:
+                if "vehicle4" in traci.vehicle.getIDList():
+                    for vid in traci.vehicle.getIDList():
+                        if vid == "vehicle4":
+                            continue
+                        active_vids.append(vid)
+                        name = self.simulation.vehicle_names.get(vid, vid)
+                        
+                        # Check range
+                        try:
+                            purple_pos = traci.vehicle.getPosition("vehicle4")
+                            target_pos = traci.vehicle.getPosition(vid)
+                            dx = purple_pos[0] - target_pos[0]
+                            dy = purple_pos[1] - target_pos[1]
+                            dist = (dx**2 + dy**2)**0.5
+                            in_range = dist <= COMMUNICATION_RANGE
+                            range_str = " [IN RANGE]" if in_range else " [OUT OF RANGE]"
+                            active_vehicles.append(f"{name} ({vid}){range_str}")
+                        except:
+                            active_vehicles.append(f"{name} ({vid})")
+            except:
+                pass
             
+            print(f"[DEBUG] refresh_targets(): active_vids = {active_vids}")
+            
+            # Update the combobox values
             self.target_combobox['values'] = active_vehicles
-            if active_vehicles and not self.selected_target.get():
+            
+            # Now handle selection logic:
+            # 1. If we have no active vehicles, clear selection
+            if not active_vehicles:
+                self.selected_target.set("")
+                print(f"[DEBUG] refresh_targets(): No active vehicles, cleared selection")
+                return
+            
+            # 2. Get current selection state
+            current_selected_vid = self.get_selected_target_id()
+            print(f"[DEBUG] refresh_targets(): current_selected_vid = '{current_selected_vid}'")
+            
+            # 3. First, check if we have a last_user_selected_vid that's still active
+            if self.last_user_selected_vid and self.last_user_selected_vid in active_vids:
+                # Find the updated string for this vid
+                for item in active_vehicles:
+                    if f"({self.last_user_selected_vid})" in item:
+                        current_str = self.selected_target.get()
+                        if current_str != item:
+                            print(f"[DEBUG] refresh_targets(): Updating string for last_user_selected_vid to '{item}'")
+                            self.selected_target.set(item)
+                        else:
+                            print(f"[DEBUG] refresh_targets(): String already correct, leaving as is")
+                        break
+                return
+            
+            # 4. Next, check if current selected vid is still active
+            if current_selected_vid and current_selected_vid in active_vids:
+                # Find the updated string for this vid
+                for item in active_vehicles:
+                    if f"({current_selected_vid})" in item:
+                        current_str = self.selected_target.get()
+                        if current_str != item:
+                            print(f"[DEBUG] refresh_targets(): Updating string for current_selected_vid to '{item}'")
+                            self.selected_target.set(item)
+                        else:
+                            print(f"[DEBUG] refresh_targets(): String already correct, leaving as is")
+                        break
+                return
+            
+            # 5. If we get here, no valid selection exists - set to first vehicle only if we haven't set anything yet
+            if not current_selected_vid and not self.last_user_selected_vid:
+                print(f"[DEBUG] refresh_targets(): No existing selection, setting to first item '{active_vehicles[0]}'")
                 self.selected_target.set(active_vehicles[0])
+            
         except Exception as e:
-            pass
+            print(f"[DEBUG] ERROR in refresh_targets(): {e}")
+            import traceback
+            traceback.print_exc()
     
     def update_periodically(self):
-        """Update targets and encountered list every 500ms"""
+        """Update targets and encountered list every 1000ms (1 second)"""
         self.refresh_targets()
-        self.root.after(500, self.update_periodically)
+        self.root.after(1000, self.update_periodically)
     
     def get_selected_target_id(self):
         """Get vehicle ID from selected target string"""
@@ -1839,7 +1923,8 @@ class PurpleCarAttackerGUI:
         if "(" in selected and ")" in selected:
             start = selected.find("(") + 1
             end = selected.find(")")
-            return selected[start:end]
+            vid = selected[start:end]
+            return vid
         return None
     
     def run_action(self, action_key):
