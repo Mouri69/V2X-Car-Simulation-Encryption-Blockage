@@ -9,4 +9,9 @@
         <begin value="0"/>
         <end value="300"/>
     </time>
+    
+    <!-- Enable collision detection and simulation (valid for all SUMO versions) -->
+    <processing>
+        <collision.action value="warn"/> <!-- Options: none, warn, stop, teleport -->
+    </processing>
 </configuration>

@@ -37,7 +37,7 @@ sys.path.append(os.path.join(SUMO_HOME, "tools"))
 
 # Simulation parameters
 SIM_CONFIG = "sumo_test/sim.sumocfg"
-COMMUNICATION_RANGE = 50  # meters
+COMMUNICATION_RANGE = 70  # meters
 SIMULATION_END = 1000  # seconds (increased to allow long running)
 
 
@@ -108,6 +108,9 @@ class V2XSimulation:
         
         # Track which cars purple car has been in range with at least once
         self.purple_encountered_cars = set()
+        
+        # Track vehicles controlled by our attacks
+        self.controlled_vehicles = {}  # key: vehicle_id, value: target_speed (m/s)
         
         # References to GUI instances (set by main())
         self.normal_v2x_gui = None
@@ -534,31 +537,32 @@ class V2XSimulation:
         current_interactions = set()
         
         # 1. Check for Fake Alert (Purple in range of a victim who has NO other friends)
-        if mitm_active:
-            mitm_neighbors = neighbors_map.get(mitm_id, [])
-            for victim_id in mitm_neighbors:
-                if victim_id == mitm_id: continue
-                
-                # Check if victim has other neighbors (excluding MITM)
-                victim_neighbors = neighbors_map.get(victim_id, [])
-                real_friends = [n for n in victim_neighbors if n != mitm_id and n != victim_id]
-                
-                if not real_friends:
-                    # Condition: Purple in range with only 1 car
-                    interaction_key = tuple(sorted([mitm_id, victim_id]) + ["fake_alert"])
-                    current_interactions.add(interaction_key)
-                    
-                    if interaction_key not in self.active_interactions:
-                        self.send_v2v_message(
-                            mitm_id,
-                            victim_id,
-                            "WARNING",
-                            {"content": "STOP! accident ahead", "is_fake": True},
-                            use_encryption=True,
-                            display_text=f"{get_name(mitm_id)} -> {get_name(victim_id)}: Fake Alert STOP! accident ahead",
-                            intercepted=False
-                        )
-                        self.active_interactions.add(interaction_key)
+        # DISABLED: No automatic attacks - only user-initiated attacks via GUI
+        # if mitm_active:
+        #     mitm_neighbors = neighbors_map.get(mitm_id, [])
+        #     for victim_id in mitm_neighbors:
+        #         if victim_id == mitm_id: continue
+        #         
+        #         # Check if victim has other neighbors (excluding MITM)
+        #         victim_neighbors = neighbors_map.get(victim_id, [])
+        #         real_friends = [n for n in victim_neighbors if n != mitm_id and n != victim_id]
+        #         
+        #         if not real_friends:
+        #             # Condition: Purple in range with only 1 car
+        #             interaction_key = tuple(sorted([mitm_id, victim_id]) + ["fake_alert"])
+        #             current_interactions.add(interaction_key)
+        #             
+        #             if interaction_key not in self.active_interactions:
+        #                 self.send_v2v_message(
+        #                     mitm_id,
+        #                     victim_id,
+        #                     "WARNING",
+        #                     {"content": "STOP! accident ahead", "is_fake": True},
+        #                     use_encryption=True,
+        #                     display_text=f"{get_name(mitm_id)} -> {get_name(victim_id)}: Fake Alert STOP! accident ahead",
+        #                     intercepted=False
+        #                 )
+        #                 self.active_interactions.add(interaction_key)
         
         # 2. Check for Normal Communication vs Interception
         # Iterate all pairs of non-attacker vehicles
@@ -794,7 +798,7 @@ class V2XSimulation:
             return
         
         if action_key == '1':
-            # Send FAKE WARNING - Make target INSTANTLY go 15 m/s
+            # Send FAKE WARNING - Make target INSTANTLY go 25 m/s
             self.send_v2v_message(
                 "vehicle4",
                 target_vehicle,
@@ -804,8 +808,11 @@ class V2XSimulation:
                 display_text=f"Purple Car -> {target_name}: 'You're driving too slow! Be faster!'",
                 intercepted=False
             )
-            traci.vehicle.setSpeed(target_vehicle, 15)
-            log_line = f"[ACTION] {target_name} speed set to 15.0 m/s (INSTANTLY faster)!"
+            self.controlled_vehicles[target_vehicle] = 25  # Lock to 25 m/s
+            traci.vehicle.setSpeed(target_vehicle, 25)
+            # Disable SUMO's automatic speed control
+            traci.vehicle.setSpeedMode(target_vehicle, 0)
+            log_line = f"[ACTION] {target_name} speed LOCKED to 25.0 m/s!"
             print(log_line)
             if self.attacker_gui:
                 try:
@@ -824,8 +831,11 @@ class V2XSimulation:
                 display_text=f"Purple Car -> {target_name}: 'ACCIDENT AHEAD! Stop immediately!'",
                 intercepted=False
             )
+            self.controlled_vehicles[target_vehicle] = 0  # Lock to 0 m/s
             traci.vehicle.setSpeed(target_vehicle, 0)
-            log_line = f"[ACTION] {target_name} stopped completely!"
+            # Disable SUMO's automatic speed control
+            traci.vehicle.setSpeedMode(target_vehicle, 0)
+            log_line = f"[ACTION] {target_name} LOCKED to 0 m/s (stopped)!"
             print(log_line)
             if self.attacker_gui:
                 try:
@@ -844,8 +854,11 @@ class V2XSimulation:
                 display_text=f"Purple Car -> {target_name}: 'SLOW DOWN! Hazard detected!'",
                 intercepted=False
             )
+            self.controlled_vehicles[target_vehicle] = 2  # Lock to 2 m/s
             traci.vehicle.setSpeed(target_vehicle, 2)
-            log_line = f"[ACTION] {target_name} speed set to 2.0 m/s (INSTANTLY very slow)!"
+            # Disable SUMO's automatic speed control
+            traci.vehicle.setSpeedMode(target_vehicle, 0)
+            log_line = f"[ACTION] {target_name} speed LOCKED to 2.0 m/s!"
             print(log_line)
             if self.attacker_gui:
                 try:
@@ -917,10 +930,23 @@ class V2XSimulation:
                     # Teleport back to start of route
                     start_edge = route[0]
                     traci.vehicle.moveTo(vid, start_edge, 0)
-                    # Set speed to normal
-                    traci.vehicle.setSpeed(vid, -1)  # -1 means let SUMO control speed
+                    # If vehicle is controlled, keep its target speed
+                    if vid in self.controlled_vehicles:
+                        traci.vehicle.setSpeed(vid, self.controlled_vehicles[vid])
+                        traci.vehicle.setSpeedMode(vid, 0)
+                    else:
+                        traci.vehicle.setSpeed(vid, -1)  # Let SUMO control
             except:
                 pass
+        
+        # Keep controlled vehicles at their target speed every step
+        for vid, target_speed in self.controlled_vehicles.items():
+            if vid in active_vehicle_ids:
+                try:
+                    traci.vehicle.setSpeed(vid, target_speed)
+                    traci.vehicle.setSpeedMode(vid, 0)  # Disable SUMO's speed control
+                except:
+                    pass
         
         # Track cars purple car has been in range with
         if "vehicle4" in active_vehicle_ids:
@@ -940,6 +966,27 @@ class V2XSimulation:
                         continue
             except:
                 pass
+        
+        # Check for collisions and log them
+        try:
+            colliding_ids = traci.simulation.getCollidingVehiclesIDList()
+            if colliding_ids:
+                # Get friendly names
+                names = [self.vehicle_names.get(vid, vid) for vid in colliding_ids]
+                log_line = f"[COLLISION] Crash between: {' and '.join(names)} at time {current_time:.1f}s"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
+                if self.normal_v2x_gui:
+                    try:
+                        self.normal_v2x_gui.log(log_line)
+                    except:
+                        pass
+        except Exception as e:
+            pass
         
         # Terminal keyboard menu disabled - using GUI instead
         
