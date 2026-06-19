@@ -130,7 +130,7 @@ class V2XSimulation:
         # --step-length: 0.1s per step (slower)
         # --delay: 100ms between steps in GUI
         # --end: simulation end time (increased to 1000s to allow long running)
-        sumo_cmd = [sumo_binary, "-c", SIM_CONFIG, "--start", "--step-length", "0.1", "--delay", "100", "--end", "1000"]
+        sumo_cmd = [sumo_binary, "-c", SIM_CONFIG, "--start", "--step-length", "0.1", "--delay", "300", "--end", "1000"]
         
         traci.start(sumo_cmd)
         print("[OK] SUMO GUI simulation started")
@@ -630,13 +630,7 @@ class V2XSimulation:
 
     def _handle_menu_action(self, action_key: str):
         """Handle menu actions for purple car"""
-        print(f"\n[DEBUG] ======================")
-        print(f"[DEBUG] _handle_menu_action CALLED")
-        print(f"[DEBUG] action_key='{action_key}'")
-        print(f"[DEBUG] self.selected_target='{self.selected_target}'")
         all_active_vids = traci.vehicle.getIDList()
-        print(f"[DEBUG] All active vehicles in SUMO: {all_active_vids}")
-        print(f"[DEBUG] ======================\n")
         if "vehicle4" not in traci.vehicle.getIDList():
             log_line = "[WARN]  Purple car (vehicle4) is not active yet!"
             print(log_line)
@@ -812,6 +806,22 @@ class V2XSimulation:
                     pass
             return
         
+        # Check if we are in post-quantum mode (attacks won't work!)
+        if self.crypto_mode == "postquantum":
+            log_line = f"[FAIL] ATTACK BLOCKED! Post-Quantum Encryption is active! Cannot control {target_name}!"
+            print(log_line)
+            if self.attacker_gui:
+                try:
+                    self.attacker_gui.log(log_line)
+                except:
+                    pass
+            if self.normal_v2x_gui:
+                try:
+                    self.normal_v2x_gui.log(f"[SAFE] Attack on {target_name} blocked by Post-Quantum Encryption!")
+                except:
+                    pass
+            return
+        
         if action_key == '1':
             # Send FAKE WARNING - Make target INSTANTLY go 25 m/s
             self.send_v2v_message(
@@ -954,14 +964,15 @@ class V2XSimulation:
             except:
                 pass
         
-        # Keep controlled vehicles at their target speed every step
-        for vid, target_speed in self.controlled_vehicles.items():
-            if vid in active_vehicle_ids:
-                try:
-                    traci.vehicle.setSpeed(vid, target_speed)
-                    traci.vehicle.setSpeedMode(vid, 0)  # Disable SUMO's speed control
-                except:
-                    pass
+        # Keep controlled vehicles at their target speed only in classical crypto mode
+        if self.crypto_mode == "classical":
+            for vid, target_speed in self.controlled_vehicles.items():
+                if vid in active_vehicle_ids:
+                    try:
+                        traci.vehicle.setSpeed(vid, target_speed)
+                        traci.vehicle.setSpeedMode(vid, 0)  # Disable SUMO's speed control
+                    except:
+                        pass
         
         # Track cars purple car has been in range with
         if "vehicle4" in active_vehicle_ids:
@@ -982,7 +993,7 @@ class V2XSimulation:
             except:
                 pass
         
-        # Check for collisions and log them
+        # Check for collisions and handle them
         try:
             colliding_ids = traci.simulation.getCollidingVehiclesIDList()
             if colliding_ids:
@@ -998,6 +1009,26 @@ class V2XSimulation:
                 if self.normal_v2x_gui:
                     try:
                         self.normal_v2x_gui.log(log_line)
+                    except:
+                        pass
+                
+                # Stop all colliding vehicles and keep them stopped
+                for vid in colliding_ids:
+                    try:
+                        traci.vehicle.setSpeed(vid, 0)
+                        traci.vehicle.setSpeedMode(vid, 0)
+                        # Change color to black to indicate a crash
+                        traci.vehicle.setColor(vid, (0, 0, 0))
+                        log_line2 = f"[STOP] {self.vehicle_names.get(vid, vid)} stopped due to collision"
+                        print(log_line2)
+                        if self.attacker_gui:
+                            self.attacker_gui.log(log_line2)
+                        if self.normal_v2x_gui:
+                            self.normal_v2x_gui.log(log_line2)
+                        
+                        # Remove them from controlled vehicles list if present
+                        if vid in self.controlled_vehicles:
+                            del self.controlled_vehicles[vid]
                     except:
                         pass
         except Exception as e:
@@ -1645,6 +1676,24 @@ class V2XSimulation:
                         print(f"   Changed from: [LOCK] CLASSICAL (AES/RSA)")
                         print(f"   Changed to:   [PQ-LOCK] POST-QUANTUM (Quantum-Resistant)")
                         print(f"   Will stay post-quantum for rest of simulation!")
+                        print(f"   [SAFE] All attacks by Purple Car are now BLOCKED!")
+                        
+                        # Release all controlled vehicles
+                        for vid in list(self.controlled_vehicles.keys()):
+                            try:
+                                # Reset speed control to let SUMO take over
+                                traci.vehicle.setSpeed(vid, -1)
+                                traci.vehicle.setSpeedMode(vid, 31)  # Default SUMO speed mode
+                                log_line = f"[SAFE] Released control of {self.vehicle_names.get(vid, vid)} (Post-Quantum active)"
+                                print(log_line)
+                                if self.attacker_gui:
+                                    self.attacker_gui.log(log_line)
+                                if self.normal_v2x_gui:
+                                    self.normal_v2x_gui.log(log_line)
+                            except:
+                                pass
+                        # Clear controlled vehicles list
+                        self.controlled_vehicles.clear()
                         
                         # Update all vehicle labels to show new crypto mode
                         for vid in list(self.vehicles.keys()):
@@ -1653,7 +1702,7 @@ class V2XSimulation:
                     
                     # Add small delay to make simulation visible (only in GUI mode)
                     # This slows down the simulation so you can see it
-                    time.sleep(0.01)  # 10ms delay per step = much smoother simulation
+                    time.sleep(0.05)  # 50ms delay per step = much slower
                     
                 except traci.exceptions.FatalTraCIError as e:
                     print(f"\n[WARN]  TraCI fatal error: {e}")
@@ -1812,8 +1861,7 @@ class PurpleCarAttackerGUI:
     def refresh_targets(self):
         """Refresh target list WITHOUT OVERWRITING USER SELECTION UNLESS ABSOLUTELY NECESSARY"""
         try:
-            print(f"[DEBUG] refresh_targets() CALLED")
-            print(f"[DEBUG] refresh_targets(): last_user_selected_vid = '{self.last_user_selected_vid}'")
+
             
             # Update encountered cars display
             encountered_list = []
@@ -1855,7 +1903,7 @@ class PurpleCarAttackerGUI:
             except:
                 pass
             
-            print(f"[DEBUG] refresh_targets(): active_vids = {active_vids}")
+
             
             # Update the combobox values
             self.target_combobox['values'] = active_vehicles
@@ -1864,12 +1912,12 @@ class PurpleCarAttackerGUI:
             # 1. If we have no active vehicles, clear selection
             if not active_vehicles:
                 self.selected_target.set("")
-                print(f"[DEBUG] refresh_targets(): No active vehicles, cleared selection")
+
                 return
             
             # 2. Get current selection state
             current_selected_vid = self.get_selected_target_id()
-            print(f"[DEBUG] refresh_targets(): current_selected_vid = '{current_selected_vid}'")
+
             
             # 3. First, check if we have a last_user_selected_vid that's still active
             if self.last_user_selected_vid and self.last_user_selected_vid in active_vids:
@@ -1878,10 +1926,9 @@ class PurpleCarAttackerGUI:
                     if f"({self.last_user_selected_vid})" in item:
                         current_str = self.selected_target.get()
                         if current_str != item:
-                            print(f"[DEBUG] refresh_targets(): Updating string for last_user_selected_vid to '{item}'")
+
                             self.selected_target.set(item)
-                        else:
-                            print(f"[DEBUG] refresh_targets(): String already correct, leaving as is")
+
                         break
                 return
             
@@ -1892,22 +1939,19 @@ class PurpleCarAttackerGUI:
                     if f"({current_selected_vid})" in item:
                         current_str = self.selected_target.get()
                         if current_str != item:
-                            print(f"[DEBUG] refresh_targets(): Updating string for current_selected_vid to '{item}'")
+
                             self.selected_target.set(item)
-                        else:
-                            print(f"[DEBUG] refresh_targets(): String already correct, leaving as is")
+
                         break
                 return
             
             # 5. If we get here, no valid selection exists - set to first vehicle only if we haven't set anything yet
             if not current_selected_vid and not self.last_user_selected_vid:
-                print(f"[DEBUG] refresh_targets(): No existing selection, setting to first item '{active_vehicles[0]}'")
+
                 self.selected_target.set(active_vehicles[0])
             
         except Exception as e:
-            print(f"[DEBUG] ERROR in refresh_targets(): {e}")
-            import traceback
-            traceback.print_exc()
+            pass
     
     def update_periodically(self):
         """Update targets and encountered list every 1000ms (1 second)"""
