@@ -106,6 +106,54 @@ class V2XSimulation:
             "vehicle12": "Grey Car"
         }
         
+        # Owner names for each vehicle
+        self.vehicle_owners = {
+            "vehicle1": "James",
+            "vehicle2": "Don",
+            "vehicle3": "Sarah",
+            "vehicle4": "Eve (Attacker)",
+            "vehicle5": "Mike",
+            "vehicle6": "Lisa",
+            "vehicle7": "Tom",
+            "vehicle8": "Anna",
+            "vehicle9": "David",
+            "vehicle10": "Emma",
+            "vehicle11": "Chris",
+            "vehicle12": "Sophia"
+        }
+        
+        # Car serial numbers
+        self.vehicle_serial_numbers = {
+            "vehicle1": "VIN-1HGCM82633A123456",
+            "vehicle2": "VIN-2HGCM82633A654321",
+            "vehicle3": "VIN-3HGCM82633A112233",
+            "vehicle4": "VIN-4HGCM82633A445566",
+            "vehicle5": "VIN-5HGCM82633A778899",
+            "vehicle6": "VIN-6HGCM82633A001122",
+            "vehicle7": "VIN-7HGCM82633A334455",
+            "vehicle8": "VIN-8HGCM82633A667788",
+            "vehicle9": "VIN-9HGCM82633A990011",
+            "vehicle10": "VIN-AHGCM82633A223344",
+            "vehicle11": "VIN-BHGCM82633A556677",
+            "vehicle12": "VIN-CHGCM82633A889900"
+        }
+        
+        # Owner security numbers (simulated)
+        self.owner_security_numbers = {
+            "vehicle1": "SSN-123-45-6789",
+            "vehicle2": "SSN-234-56-7890",
+            "vehicle3": "SSN-345-67-8901",
+            "vehicle4": "SSN-456-78-9012",
+            "vehicle5": "SSN-567-89-0123",
+            "vehicle6": "SSN-678-90-1234",
+            "vehicle7": "SSN-789-01-2345",
+            "vehicle8": "SSN-890-12-3456",
+            "vehicle9": "SSN-901-23-4567",
+            "vehicle10": "SSN-012-34-5678",
+            "vehicle11": "SSN-135-79-2468",
+            "vehicle12": "SSN-246-80-1357"
+        }
+        
         # Track which cars purple car has been in range with at least once
         self.purple_encountered_cars = set()
         
@@ -666,48 +714,25 @@ class V2XSimulation:
                     pass
             return
         
-        if action_key == '4':
-            # GET VEHICLE DATA - doesn't need selected target
-            print("\n[DATA] VEHICLE DATA:")
-            for vid in active_vehicles:
+        # Check if we are in post-quantum mode (attacks & data retrieval won't work!)
+        if self.crypto_mode == "postquantum":
+            log_line = "[FAIL] ACCESS DENIED! Post-Quantum Encryption is active! Cannot retrieve vehicle info or perform attacks!"
+            print(log_line)
+            if self.attacker_gui:
                 try:
-                    pos = traci.vehicle.getPosition(vid)
-                    speed = traci.vehicle.getSpeed(vid)
-                    edge = traci.vehicle.getRoadID(vid)
-                    
-                    # Calculate distance to purple car
-                    dx = purple_pos[0] - pos[0]
-                    dy = purple_pos[1] - pos[1]
-                    dist = (dx**2 + dy**2)**0.5
-                    
-                    name = self.vehicle_names.get(vid, vid)
-                    log_line1 = f"  {name}:"
-                    log_line2 = f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})"
-                    log_line3 = f"    Speed: {speed:.2f} m/s"
-                    log_line4 = f"    Edge: {edge}"
-                    log_line5 = f"    Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}"
-                    print(log_line1)
-                    print(log_line2)
-                    print(log_line3)
-                    print(log_line4)
-                    print(log_line5)
-                    if self.attacker_gui:
-                        try:
-                            self.attacker_gui.log(log_line1)
-                            self.attacker_gui.log(log_line2)
-                            self.attacker_gui.log(log_line3)
-                            self.attacker_gui.log(log_line4)
-                            self.attacker_gui.log(log_line5)
-                        except:
-                            pass
+                    self.attacker_gui.log(log_line)
                 except:
                     pass
-            print()
+            if self.normal_v2x_gui:
+                try:
+                    self.normal_v2x_gui.log("[SAFE] Vehicle info retrieval blocked by Post-Quantum Encryption!")
+                except:
+                    pass
             return
         
-        if action_key == '5':
-            # GET DATA ONLY FOR CARS PURPLE HAS BEEN IN RANGE WITH
-            print("\n[DATA] VEHICLE DATA (ENCOUNTERED ONLY):")
+        if action_key == '4':
+            # GET ALL ENCOUNTERED VEHICLE DATA
+            print("\n[DATA] ALL ENCOUNTERED VEHICLE DATA:")
             if not self.purple_encountered_cars:
                 log_line = "  No cars encountered yet!"
                 print(log_line)
@@ -725,25 +750,113 @@ class V2XSimulation:
                     speed = traci.vehicle.getSpeed(vid)
                     edge = traci.vehicle.getRoadID(vid)
                     
+                    # Calculate distance to purple car
+                    dx = purple_pos[0] - pos[0]
+                    dy = purple_pos[1] - pos[1]
+                    dist = (dx**2 + dy**2)**0.5
+                    
                     name = self.vehicle_names.get(vid, vid)
-                    log_line1 = f"  {name}:"
-                    log_line2 = f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})"
-                    log_line3 = f"    Speed: {speed:.2f} m/s"
-                    log_line4 = f"    Edge: {edge}"
+                    owner = self.vehicle_owners.get(vid, "Unknown")
+                    serial = self.vehicle_serial_numbers.get(vid, "Unknown")
+                    ssn = self.owner_security_numbers.get(vid, "Unknown")
+                    log_line1 = f"  {name} (Owner: {owner}):"
+                    log_line2 = f"    Car Serial: {serial}"
+                    log_line3 = f"    Owner Security Number: {ssn}"
+                    log_line4 = f"    Position: ({pos[0]:.1f}, {pos[1]:.1f})"
+                    log_line5 = f"    Speed: {speed:.2f} m/s"
+                    log_line6 = f"    Edge: {edge}"
+                    log_line7 = f"    Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}"
                     print(log_line1)
                     print(log_line2)
                     print(log_line3)
                     print(log_line4)
+                    print(log_line5)
+                    print(log_line6)
+                    print(log_line7)
                     if self.attacker_gui:
                         try:
                             self.attacker_gui.log(log_line1)
                             self.attacker_gui.log(log_line2)
                             self.attacker_gui.log(log_line3)
                             self.attacker_gui.log(log_line4)
+                            self.attacker_gui.log(log_line5)
+                            self.attacker_gui.log(log_line6)
+                            self.attacker_gui.log(log_line7)
                         except:
                             pass
                 except:
                     pass
+            print()
+            return
+        
+        if action_key == '5':
+            # GET SELECTED TARGET DATA ONLY
+            if not self.selected_target:
+                log_line = "[WARN] No target selected! Please select a target first!"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
+                return
+            if self.selected_target not in active_vehicles:
+                log_line = f"[WARN] Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} no longer exists!"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
+                return
+            vid = self.selected_target
+            try:
+                pos = traci.vehicle.getPosition(vid)
+                speed = traci.vehicle.getSpeed(vid)
+                edge = traci.vehicle.getRoadID(vid)
+                
+                # Calculate distance to purple car
+                dx = purple_pos[0] - pos[0]
+                dy = purple_pos[1] - pos[1]
+                dist = (dx**2 + dy**2)**0.5
+                
+                name = self.vehicle_names.get(vid, vid)
+                owner = self.vehicle_owners.get(vid, "Unknown")
+                serial = self.vehicle_serial_numbers.get(vid, "Unknown")
+                ssn = self.owner_security_numbers.get(vid, "Unknown")
+                log_line1 = f"\n[DATA] SELECTED TARGET DATA: {name} (Owner: {owner})"
+                log_line2 = f"  Car Serial: {serial}"
+                log_line3 = f"  Owner Security Number: {ssn}"
+                log_line4 = f"  Position: ({pos[0]:.1f}, {pos[1]:.1f})"
+                log_line5 = f"  Speed: {speed:.2f} m/s"
+                log_line6 = f"  Edge: {edge}"
+                log_line7 = f"  Distance to purple: {dist:.1f}m {'(IN RANGE)' if dist <= COMMUNICATION_RANGE else '(OUT OF RANGE)'}"
+                print(log_line1)
+                print(log_line2)
+                print(log_line3)
+                print(log_line4)
+                print(log_line5)
+                print(log_line6)
+                print(log_line7)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line1)
+                        self.attacker_gui.log(log_line2)
+                        self.attacker_gui.log(log_line3)
+                        self.attacker_gui.log(log_line4)
+                        self.attacker_gui.log(log_line5)
+                        self.attacker_gui.log(log_line6)
+                        self.attacker_gui.log(log_line7)
+                    except:
+                        pass
+            except Exception as e:
+                log_line = f"[ERROR] Could not retrieve data for target: {str(e)}"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
             print()
             return
         
@@ -802,22 +915,6 @@ class V2XSimulation:
             if self.attacker_gui:
                 try:
                     self.attacker_gui.log(log_line)
-                except:
-                    pass
-            return
-        
-        # Check if we are in post-quantum mode (attacks won't work!)
-        if self.crypto_mode == "postquantum":
-            log_line = f"[FAIL] ATTACK BLOCKED! Post-Quantum Encryption is active! Cannot control {target_name}!"
-            print(log_line)
-            if self.attacker_gui:
-                try:
-                    self.attacker_gui.log(log_line)
-                except:
-                    pass
-            if self.normal_v2x_gui:
-                try:
-                    self.normal_v2x_gui.log(f"[SAFE] Attack on {target_name} blocked by Post-Quantum Encryption!")
                 except:
                     pass
             return
@@ -1618,8 +1715,8 @@ class V2XSimulation:
         print("\n[CAR] Starting simulation...")
         print(f"   Running for {SIMULATION_END} seconds ({SIMULATION_END//60} minutes)...")
         print(f"\n[MENU] CRYPTO SCHEDULE:")
-        print(f"   [LOCK] 0-60s:     CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
-        print(f"   [PQ-LOCK] 60-300s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
+        print(f"   [LOCK] 0-90s:     CLASSICAL (AES/RSA) - Vulnerable to quantum attacks")
+        print(f"   [PQ-LOCK] 90-300s:   POST-QUANTUM (Quantum-Resistant) - Safe from quantum attacks")
         print(f"\n[CAR] VEHICLES:")
         print(f"   Vehicle1: RED")
         print(f"   Vehicle2: GREEN")
@@ -1668,8 +1765,8 @@ class V2XSimulation:
                     
                     step += 1
                     
-                    # Switch crypto mode to post-quantum at 60 seconds and stay there
-                    if current_time >= 60.0 and self.crypto_mode == "classical":
+                    # Switch crypto mode to post-quantum at 90 seconds and stay there
+                    if current_time >= 90.0 and self.crypto_mode == "classical":
                         self.crypto_mode = "postquantum"
                         print(f"\n{'='*60}")
                         print(f"[INFO] CRYPTO MODE SWITCH at {current_time:.1f}s")
@@ -1814,9 +1911,9 @@ class PurpleCarAttackerGUI:
                    command=lambda: self.run_action('2')).pack(fill=tk.X, pady=5)
         ttk.Button(actions_frame, text="3. Send SLOW DOWN (Make Very Slow - 2 m/s)", 
                    command=lambda: self.run_action('3')).pack(fill=tk.X, pady=5)
-        ttk.Button(actions_frame, text="4. Get ALL VEHICLE DATA", 
+        ttk.Button(actions_frame, text="4. Get ALL ENCOUNTERED VEHICLE DATA", 
                    command=lambda: self.run_action('4')).pack(fill=tk.X, pady=5)
-        ttk.Button(actions_frame, text="5. Get ENCOUNTERED VEHICLE DATA ONLY", 
+        ttk.Button(actions_frame, text="5. Get SELECTED TARGET DATA ONLY", 
                    command=lambda: self.run_action('5')).pack(fill=tk.X, pady=5)
         
         # Log area
@@ -1973,16 +2070,19 @@ class PurpleCarAttackerGUI:
     
     def run_action(self, action_key):
         """Run action via simulation's handle_menu_action method"""
-        selected_vid = self.get_selected_target_id()
-        
-        # For actions 1-3, we need a selected target
-        if action_key in ['1', '2', '3']:
-            if not selected_vid:
-                messagebox.showwarning("Warning", "Please select a target vehicle first!")
-                return
-            self.simulation.selected_target = selected_vid
-        
-        self.simulation._handle_menu_action(action_key)
+        try:
+            selected_vid = self.get_selected_target_id()
+            
+            # For actions 1-3, we need a selected target
+            if action_key in ['1', '2', '3']:
+                if not selected_vid:
+                    self.log("[WARN] Please select a target vehicle first!")
+                    return
+                self.simulation.selected_target = selected_vid
+            
+            self.simulation._handle_menu_action(action_key)
+        except Exception as e:
+            self.log(f"[ERROR] Could not perform action: {str(e)}")
     
     def run(self):
         """Start GUI main loop"""
