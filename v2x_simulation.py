@@ -800,8 +800,17 @@ class V2XSimulation:
                     except:
                         pass
                 return
+            if self.selected_target not in self.purple_encountered_cars:
+                log_line = f"[WARN] Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} has not been encountered yet! Purple car must be in range of it at least once!"
+                print(log_line)
+                if self.attacker_gui:
+                    try:
+                        self.attacker_gui.log(log_line)
+                    except:
+                        pass
+                return
             if self.selected_target not in active_vehicles:
-                log_line = f"[WARN] Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} no longer exists!"
+                log_line = f"[WARN] Selected target {self.vehicle_names.get(self.selected_target, self.selected_target)} is not currently active!"
                 print(log_line)
                 if self.attacker_gui:
                     try:
@@ -1920,7 +1929,7 @@ class PurpleCarAttackerGUI:
         log_frame = ttk.LabelFrame(main_frame, text="Attack Log", padding="10")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        self.log_text = tk.Text(log_frame, height=10, state=tk.DISABLED)
+        self.log_text = tk.Text(log_frame, height=40, state=tk.DISABLED)
         scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
@@ -2065,8 +2074,8 @@ class PurpleCarAttackerGUI:
         try:
             selected_vid = self.get_selected_target_id()
             
-            # For actions 1-3, we need a selected target
-            if action_key in ['1', '2', '3']:
+            # For actions 1-3 and 5, we need a selected target
+            if action_key in ['1', '2', '3', '5']:
                 if not selected_vid:
                     self.log("[WARN] Please select a target vehicle first!")
                     return
