@@ -1985,18 +1985,10 @@ class PurpleCarAttackerGUI:
                         active_vids.append(vid)
                         name = self.simulation.vehicle_names.get(vid, vid)
                         
-                        # Check range
-                        try:
-                            purple_pos = traci.vehicle.getPosition("vehicle4")
-                            target_pos = traci.vehicle.getPosition(vid)
-                            dx = purple_pos[0] - target_pos[0]
-                            dy = purple_pos[1] - target_pos[1]
-                            dist = (dx**2 + dy**2)**0.5
-                            in_range = dist <= COMMUNICATION_RANGE
-                            range_str = " [IN RANGE]" if in_range else " [OUT OF RANGE]"
-                            active_vehicles.append(f"{name} ({vid}){range_str}")
-                        except:
-                            active_vehicles.append(f"{name} ({vid})")
+                        # Check if encountered
+                        encountered = vid in self.simulation.purple_encountered_cars
+                        status_str = " [ENCOUNTERED]" if encountered else ""
+                        active_vehicles.append(f"{name} ({vid}){status_str}")
             except:
                 pass
             
